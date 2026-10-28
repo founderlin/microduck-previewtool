@@ -13,6 +13,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createWorkbench } from './workbench.js';
+import { workbenchConfig } from './runtime.js';
 
 /** Shared channel prefix these routes answer under. */
 export const API_PREFIX = '/api/microduck';
@@ -55,7 +57,7 @@ function parseRange(header, size) {
 }
 
 /** Stream an mp4 file with RFC 7233 range support (206/416/200). */
-function serveVideo(req, res, filePath) {
+export function serveVideo(req, res, filePath) {
   let stat;
   try {
     stat = fs.statSync(filePath);
@@ -125,10 +127,13 @@ function pipeFile(req, res, filePath, range) {
 export function createApiHandler(options) {
   const { store, templates, guard, logger = () => {} } = options;
   const apiPrefix = options.apiPrefix ?? API_PREFIX;
+  const workbench = createWorkbench({ config: workbenchConfig(store), store, send: sendJson, serveVideo });
 
   return async function handler(req, res) {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const pathname = decodeURIComponent(url.pathname);
+    let pathname;
+    try { pathname = decodeURIComponent(url.pathname); } catch { sendJson(res, 400, { error: 'invalid_path' }); return; }
+    if (pathname.includes('..') || pathname.includes('\\') || pathname.includes('\0')) { sendJson(res, 404, { error: 'not_found' }); return; }
 
     if (!pathname.startsWith(apiPrefix)) {
       sendJson(res, 404, { error: 'not_found' });
@@ -159,6 +164,7 @@ export function createApiHandler(options) {
     const method = req.method ?? 'GET';
 
     try {
+      if (await workbench(req, res, url)) return;
       if ((method === 'GET' || method === 'HEAD') && parts.length === 1 && parts[0] === 'health') {
         const engine = store.resolveEngine();
         sendJson(res, 200, {
@@ -314,7 +320,7 @@ export function createApiHandler(options) {
             frame = await options.frames.render(record.id, taskDir, params);
           } catch (error) {
             logger('frame render failed', error?.message ?? error);
-            sendJson(res, 500, { error: 'frame_failed', message: String(error?.message ?? error) });
+            sendJson(res, error.status ?? 400, { error: 'frame_failed', message: String(error?.message ?? error) });
             return;
           }
           if (res.writableEnded || res.destroyed) return;
@@ -333,7 +339,7 @@ export function createApiHandler(options) {
       sendJson(res, 404, { error: 'not_found', path: pathname });
     } catch (error) {
       logger('api handler failed', error?.stack ?? error);
-      sendJson(res, 500, { error: 'internal_error', message: String(error?.message ?? error) });
+      sendJson(res, error.status ?? 400, { error: 'internal_error', message: String(error?.message ?? error) });
     }
   };
 }

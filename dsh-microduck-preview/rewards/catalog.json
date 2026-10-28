@@ -1,0 +1,463 @@
+{
+  "schema_version": 1,
+  "source": "mjlab_microduck.tasks.microduck_velocity_env_cfg",
+  "presets": {
+    "walk": [
+      "track_linear_velocity",
+      "track_angular_velocity",
+      "upright",
+      "air_time",
+      "foot_slip",
+      "self_collisions"
+    ],
+    "hover": [
+      "upright",
+      "pose",
+      "foot_slip",
+      "self_collisions",
+      "body_ang_vel"
+    ]
+  },
+  "terms": [
+    {
+      "id": "track_linear_velocity",
+      "label_zh": "线速度跟踪",
+      "kind": "reward",
+      "function": "mjlab.tasks.velocity.mdp.rewards:track_linear_velocity",
+      "weight": {
+        "default": 2.0,
+        "min": 0,
+        "max": 8
+      },
+      "params": {
+        "std": {
+          "default": 0.316227766,
+          "min": 0.05,
+          "max": 1.0
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite"
+      ],
+      "active_when": "travel",
+      "kinematic_evaluable": true,
+      "explain": {
+        "perturbation": {
+          "type": "scale_forward_speed",
+          "factor": 0.4
+        },
+        "highlight_bodies": [
+          "trunk_base"
+        ]
+      },
+      "help": "实际前进速度越接近指令速度，得分越高。",
+      "fixed_params": {
+        "command_name": "twist"
+      }
+    },
+    {
+      "id": "track_angular_velocity",
+      "label_zh": "角速度跟踪",
+      "kind": "reward",
+      "function": "mjlab.tasks.velocity.mdp.rewards:track_angular_velocity",
+      "weight": {
+        "default": 2.0,
+        "min": 0,
+        "max": 8
+      },
+      "params": {
+        "std": {
+          "default": 0.707106781,
+          "min": 0.1,
+          "max": 2.0
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite"
+      ],
+      "active_when": "yaw",
+      "kinematic_evaluable": true,
+      "explain": {
+        "perturbation": {
+          "type": "scale_yaw_rate",
+          "factor": 0.3
+        },
+        "highlight_bodies": [
+          "trunk_base"
+        ]
+      },
+      "help": "实际转向角速度越接近指令角速度，得分越高。",
+      "fixed_params": {
+        "command_name": "twist"
+      }
+    },
+    {
+      "id": "upright",
+      "label_zh": "机身直立",
+      "kind": "reward",
+      "function": "mjlab.tasks.velocity.mdp.rewards:upright",
+      "weight": {
+        "default": 2.0,
+        "min": 0,
+        "max": 8
+      },
+      "params": {
+        "std": {
+          "default": 0.223606798,
+          "min": 0.05,
+          "max": 1.0
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": true,
+      "explain": {
+        "perturbation": {
+          "type": "tilt_root",
+          "pitch_deg": 10
+        },
+        "highlight_bodies": [
+          "trunk_base"
+        ]
+      },
+      "help": "机身越接近竖直，得分越高。",
+      "fixed_params": {}
+    },
+    {
+      "id": "pose",
+      "label_zh": "关节姿态",
+      "kind": "reward",
+      "function": "mjlab.tasks.velocity.mdp.rewards:variable_posture",
+      "weight": {
+        "default": 1.0,
+        "min": 0,
+        "max": 4
+      },
+      "params": {
+        "walking_threshold": {
+          "default": 0.01,
+          "min": 0,
+          "max": 0.1
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "joint_offset",
+          "scale": 0.25
+        },
+        "highlight_bodies": [
+          "left_knee",
+          "right_knee"
+        ]
+      },
+      "help": "腿部关节越接近默认站姿（行走时放宽），得分越高。",
+      "fixed_params": {
+        "command_name": "twist",
+        "std_walking": {
+          ".*": 0.5
+        },
+        "std_running": {
+          ".*": 0.5
+        },
+        "std_standing": {
+          ".*": 0.3
+        },
+        "asset_cfg": {
+          "name": "robot",
+          "joint_names": [
+            ".*"
+          ]
+        }
+      }
+    },
+    {
+      "id": "air_time",
+      "label_zh": "腾空时间",
+      "kind": "reward",
+      "function": "mjlab.tasks.velocity.mdp.rewards:feet_air_time",
+      "weight": {
+        "default": 3.0,
+        "min": 0,
+        "max": 8
+      },
+      "params": {
+        "command_threshold": {
+          "default": 0.01,
+          "min": 0,
+          "max": 0.1
+        },
+        "threshold_min": {
+          "default": 0.125,
+          "min": 0.05,
+          "max": 0.25
+        },
+        "threshold_max": {
+          "default": 0.3,
+          "min": 0.15,
+          "max": 0.5
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite"
+      ],
+      "active_when": "travel",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "drag_feet"
+        },
+        "highlight_bodies": [
+          "left_foot",
+          "right_foot"
+        ]
+      },
+      "help": "行走时摆动腿离地时间落在目标窗口内则得分。",
+      "fixed_params": {
+        "command_name": "twist",
+        "sensor_name": "feet_ground_contact"
+      }
+    },
+    {
+      "id": "foot_slip",
+      "label_zh": "支撑脚打滑",
+      "kind": "penalty",
+      "function": "mjlab.tasks.velocity.mdp.rewards:feet_slip",
+      "weight": {
+        "default": -0.1,
+        "min": -1.0,
+        "max": 0
+      },
+      "params": {
+        "command_threshold": {
+          "default": 0.01,
+          "min": 0,
+          "max": 0.1
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "contact",
+      "kinematic_evaluable": true,
+      "explain": {
+        "perturbation": {
+          "type": "stance_foot_drift",
+          "amount_m": 0.01
+        },
+        "highlight_bodies": [
+          "left_foot",
+          "right_foot"
+        ]
+      },
+      "help": "着地期间支撑脚滑动越多，扣分越多。",
+      "fixed_params": {
+        "command_name": "twist",
+        "sensor_name": "feet_ground_contact"
+      }
+    },
+    {
+      "id": "self_collisions",
+      "label_zh": "自碰撞",
+      "kind": "penalty",
+      "function": "mjlab.tasks.velocity.mdp.rewards:self_collision_cost",
+      "weight": {
+        "default": -1.0,
+        "min": -4.0,
+        "max": 0
+      },
+      "params": {},
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "knee_inward",
+          "amount_m": 0.02
+        },
+        "highlight_bodies": [
+          "left_knee",
+          "right_knee"
+        ]
+      },
+      "help": "腿与机身发生穿透接触时扣分。",
+      "fixed_params": {
+        "sensor_name": "self_collision"
+      }
+    },
+    {
+      "id": "body_ang_vel",
+      "label_zh": "机身晃动",
+      "kind": "penalty",
+      "function": "mjlab.tasks.velocity.mdp.rewards:body_angular_velocity_penalty",
+      "weight": {
+        "default": -0.05,
+        "min": -1.0,
+        "max": 0
+      },
+      "params": {},
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": true,
+      "explain": {
+        "perturbation": {
+          "type": "root_wobble",
+          "amp_deg": 8
+        },
+        "highlight_bodies": [
+          "trunk_base"
+        ]
+      },
+      "help": "机身角速度越大，扣分越多。",
+      "fixed_params": {}
+    },
+    {
+      "id": "action_rate_l2",
+      "label_zh": "动作突变",
+      "kind": "penalty",
+      "function": "mjlab.envs.mdp.rewards:action_rate_l2",
+      "weight": {
+        "default": -0.1,
+        "min": -2.0,
+        "max": 0
+      },
+      "params": {},
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "joint_jitter",
+          "amp_rad": 0.08
+        },
+        "highlight_bodies": []
+      },
+      "help": "相邻控制步的关节指令变化越大，扣分越多。",
+      "fixed_params": {}
+    },
+    {
+      "id": "foot_clearance",
+      "label_zh": "抬脚离地",
+      "kind": "penalty",
+      "function": "mjlab.tasks.velocity.mdp.rewards:feet_clearance",
+      "weight": {
+        "default": -0.1,
+        "min": -4,
+        "max": 0
+      },
+      "params": {
+        "command_threshold": {
+          "default": 0.01,
+          "min": 0,
+          "max": 0.1
+        },
+        "target_height": {
+          "default": 0.02,
+          "min": 0.005,
+          "max": 0.05
+        }
+      },
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "swing",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "lower_swing_foot",
+          "amount_m": 0.015
+        },
+        "highlight_bodies": [
+          "left_foot",
+          "right_foot"
+        ]
+      },
+      "help": "脚离地高度偏离目标、且横向运动时扣分。",
+      "fixed_params": {
+        "command_name": "twist",
+        "height_sensor_name": "foot_height"
+      }
+    },
+    {
+      "id": "servo_stall",
+      "label_zh": "舵机堵转",
+      "kind": "penalty",
+      "function": "mjlab_microduck.tasks.mdp:servo_stall_penalty",
+      "weight": {
+        "default": 0.0,
+        "min": -2.0,
+        "max": 0
+      },
+      "params": {},
+      "applies_to": [
+        "line",
+        "arc",
+        "figure8",
+        "composite",
+        "hover"
+      ],
+      "active_when": "always",
+      "kinematic_evaluable": false,
+      "explain": {
+        "perturbation": {
+          "type": "none"
+        }
+      },
+      "help": "需要 BAM 执行器力矩，仅训练后可见，运动学预览不算分。",
+      "fixed_params": {
+        "asset_cfg": {
+          "name": "robot"
+        }
+      }
+    }
+  ]
+}

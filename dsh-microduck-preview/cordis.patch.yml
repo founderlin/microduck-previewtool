@@ -16,7 +16,8 @@
         # bundled demo clip and labels itself DEMO. "real" / "demo" force one.
         engine: auto
         # External asset repo (read-only for this plugin).
-        assetsRoot: "/Users/founderlin/Desktop/RL研发/microduck-marseille"
+        # assetsRoot is inferred from the configured Python venv.
+        # assetsRoot: "/path/to/microduck_rl-develop"
         # Interpreter with mujoco/imageio/PIL/scipy installed.
         python: "/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python"
         # Where task directories (preview.mp4 + metrics.json) are written.

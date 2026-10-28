@@ -91,3 +91,25 @@ test('CLI exits unsuccessfully for a terminal pipeline error', async () => {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });
+
+test('occupied non-Microduck port falls back to a free loopback port', async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'duck-port-'));
+  const net = await import('node:net');
+  const sockets = new Set();
+  const occupied = net.createServer((socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); socket.end(); });
+  await new Promise((resolve) => occupied.listen(0, '127.0.0.1', resolve));
+  const env = { ...process.env, MICRODUCK_DATA_DIR: temporary, MICRODUCK_ENGINE: 'demo', MICRODUCK_PORT: String(occupied.address().port) };
+  delete env.MICRODUCK_CONFIG;
+  try {
+    const result = await run(process.execPath, [cli, 'start'], { env, timeout: 20000 });
+    const started = JSON.parse(result.stdout);
+    assert.equal(started.ok, true);
+    assert.notEqual(Number(new URL(started.origin).port), occupied.address().port);
+    const invalid = await run(process.execPath, [cli, 'history', '--session', '..'], { env }).catch((e) => e);
+    assert.equal(invalid.code, 1);
+  } finally {
+    await run(process.execPath, [cli, 'stop'], { env, timeout: 10000 }).catch(() => {});
+    for (const socket of sockets) socket.destroy();
+    await new Promise((resolve) => occupied.close(resolve)); fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});

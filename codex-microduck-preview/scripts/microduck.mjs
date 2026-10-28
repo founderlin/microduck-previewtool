@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { loadConfig, doctor } from '../lib/config.mjs';
+import net from 'node:net';
+import { verifyPack } from '../lib/pack.mjs';
 
 const scriptPath = fs.realpathSync(fileURLToPath(import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,15 +60,38 @@ async function inspectService(config) {
   } catch { return null; }
 }
 
-async function ensureService(config) {
-  const active = await inspectService(config);
-  if (active) return { ...active, reused: true };
-  fs.mkdirSync(config.dataDir, { recursive: true });
-  const logPath = path.join(config.dataDir, 'server.log');
+async function occupantOnPort(port) {
+  try {
+    return await request(`http://127.0.0.1:${port}`, '/api/microduck/health', { timeout: 400 });
+  } catch {
+    return null;
+  }
+}
+
+function spawnEnv(config, port) {
+  return {
+    ...process.env,
+    MICRODUCK_PYTHON: config.python,
+    MICRODUCK_ASSET_ROOT: config.assetsRoot,
+    MICRODUCK_DATA_DIR: config.dataDir,
+    MICRODUCK_PORT: String(port),
+    MICRODUCK_ENGINE: config.engine,
+    ...(process.env.MICRODUCK_CONFIG ? { MICRODUCK_CONFIG: path.resolve(process.env.MICRODUCK_CONFIG) } : {}),
+  };
+}
+
+function tail(file, max = 800) {
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    return text.slice(-max);
+  } catch { return ''; }
+}
+
+async function spawnServe(config, port, logPath) {
   const log = fs.openSync(logPath, 'a', 0o600);
   const child = spawn(process.execPath, [scriptPath, 'serve'], {
     cwd: config.projectRoot, detached: true, stdio: ['ignore', log, log],
-    env: { ...process.env, ...(process.env.MICRODUCK_CONFIG ? { MICRODUCK_CONFIG: path.resolve(process.env.MICRODUCK_CONFIG) } : {}) },
+    env: spawnEnv(config, port),
   });
   fs.closeSync(log);
   let spawnError;
@@ -75,18 +100,57 @@ async function ensureService(config) {
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     if (spawnError) throw new Error(`服务启动失败：${spawnError.message}`);
-    const service = await inspectService(config);
-    if (service) return { ...service, reused: false };
+    if (child.exitCode !== null) throw new Error(`服务退出（${child.exitCode}）：${tail(logPath)}`);
+    const service = await inspectService({ ...config, port });
+    if (service) return { ...service, reused: false, port };
     await sleep(200);
   }
-  throw new Error(`本地服务未能启动。请查看 ${logPath}；也可运行 serve 在前台诊断。`);
+  const logTail = tail(logPath);
+  const occupant = await occupantOnPort(port);
+  if (occupant && occupant.projectRoot && occupant.projectRoot !== config.projectRoot) {
+    throw new Error(`端口 ${port} 被其他 Microduck 项目占用：${occupant.projectRoot}`);
+  }
+  if (/EADDRINUSE/.test(logTail)) throw new Error(`端口 ${port} 已被占用（EADDRINUSE）。`);
+  throw new Error(`本地服务未能在端口 ${port} 启动。请查看 ${logPath}；也可运行 serve 在前台诊断。`);
+}
+
+async function ensureService(config) {
+  const active = await inspectService(config);
+  if (active) return { ...active, reused: true };
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  const logPath = path.join(config.dataDir, 'server.log');
+  const ports = config.port === 0 ? [0] : [config.port, 0];
+  const errors = [];
+  for (const port of ports) {
+    const occupant = await occupantOnPort(port);
+    if (occupant?.projectRoot && occupant.projectRoot !== config.projectRoot) {
+      errors.push(`端口 ${port} 被其他项目占用：${occupant.projectRoot}`);
+      continue;
+    }
+    if (port) {
+      const free = await new Promise((resolve) => {
+        const probe = net.createServer();
+        probe.once('error', () => resolve(false));
+        probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)));
+      });
+      if (!free) { errors.push(`端口 ${port} 已被占用`); continue; }
+    }
+    try {
+      return await spawnServe(config, port, logPath);
+    } catch (error) {
+      errors.push(error.message);
+      if (!/占用|EADDRINUSE/.test(error.message)) break;
+    }
+  }
+  throw new Error(`本地服务未能启动。${errors.join('；')}。请查看 ${logPath}。`);
 }
 
 function requireSession(args) {
-  const session = args.session ?? process.env.CODEX_THREAD_ID;
+  const session = args.session ?? process.env.CODEX_THREAD_ID ?? process.env.CURSOR_CHAT_ID;
   if (typeof session !== 'string' || !session.trim()) {
     throw new Error('缺少当前对话标识：传入 --session <稳定且唯一的对话标识>，或设置 CODEX_THREAD_ID。');
   }
+  if (!/^[\w.:@-]{1,160}$/.test(session.trim()) || ['.', '..'].includes(session.trim())) throw new Error('无效的会话标识。');
   return session.trim();
 }
 
@@ -112,12 +176,16 @@ export async function main(argv = process.argv.slice(2)) {
   const config = loadConfig();
   if (args.command === 'help') {
     return {
-      commands: ['doctor', 'start', 'serve', 'stop', 'templates', 'preview', 'status', 'history', 'viewer'],
+      commands: ['doctor', 'start', 'serve', 'stop', 'templates', 'preview', 'status', 'history', 'viewer', 'rewards', 'pack', 'verify'],
       usage: 'node scripts/microduck.mjs <command> --session <id> [--params JSON | --params-file FILE] [--task ID] [--base-task ID] [--wait-ms 0..25000]',
-      note: '会话命令需要 --session 或 CODEX_THREAD_ID。preview 默认立即返回任务；用 status 查询，不重复提交。',
+      note: '会话命令需要 --session 或 CODEX_THREAD_ID。没有环境变量时，传入当前对话的稳定唯一 ID。preview 默认立即返回任务；用 status 查询，不重复提交。',
     };
   }
   if (args.command === 'doctor') return doctor(config);
+  if (args.command === 'verify') {
+    if (typeof args.pack !== 'string') throw new Error('需要 --pack <审核包目录>。');
+    return verifyPack(config, path.resolve(args.pack));
+  }
   if (args.command === 'serve') {
     const { startServer } = await import('../lib/server.mjs');
     const service = await startServer(config);
@@ -138,8 +206,22 @@ export async function main(argv = process.argv.slice(2)) {
     const service = await ensureService(config);
     return { ok: true, origin: service.origin, pid: service.pid, reused: service.reused, instance_id: service.instance_id };
   }
-  if (!['templates', 'preview', 'status', 'history', 'viewer'].includes(args.command)) throw new Error(`未知命令：${args.command}`);
+  if (!['templates', 'preview', 'status', 'history', 'viewer', 'rewards', 'pack'].includes(args.command)) {
+    throw new Error(`未知命令：${args.command}`);
+  }
   const session = requireSession(args);
+  if (args.command === 'rewards') {
+    const action = args._[0] ?? 'list';
+    if (!['list', 'add', 'remove', 'set', 'explain'].includes(action)) throw new Error('rewards 子命令只支持 list | add | remove | set | explain。');
+    const service = await ensureService(config);
+    const task = typeof args.task === 'string' ? args.task : undefined;
+    const id = String(args.id ?? args._[1] ?? '');
+    if (action === 'explain') {
+      if (!task) throw new Error('释义短片需要 --task ID。');
+      return request(service.origin, routeWithSession(`/tasks/${encodeURIComponent(task)}/explain`.replace(/^/, '/api/microduck'), session), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }), timeout: 120_000 });
+    }
+    return request(service.origin, routeWithSession('/api/microduck/rewards', session), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, id, task_id: task, pattern: args.pattern, ...(args.weight !== undefined ? { weight: Number(args.weight) } : {}), ...(args.params ? { params: JSON.parse(String(args.params)) } : {}), ...(args.phases ? { active_phases: String(args.phases).split(',') } : {}) }) });
+  }
   // Validate user input before starting a background process.
   let params;
   let waitMs;
@@ -153,11 +235,16 @@ export async function main(argv = process.argv.slice(2)) {
     waitMs = Number(args['wait-ms'] ?? 0);
     if (!Number.isFinite(waitMs) || waitMs < 0 || waitMs > 25_000) throw new Error('--wait-ms 必须在 0–25000 毫秒范围内。');
   }
-  if (args.command === 'status') taskId(args);
+  if (args.command === 'status' || args.command === 'pack') taskId(args);
   const service = await ensureService(config);
   const origin = service.origin;
   if (args.command === 'templates') return request(origin, routeWithSession('/api/microduck/presets', session));
   if (args.command === 'history') return request(origin, routeWithSession('/api/microduck/tasks', session));
+  if (args.command === 'pack') {
+    return request(origin, routeWithSession(`/api/microduck/tasks/${encodeURIComponent(taskId(args))}/pack`, session), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', timeout: 200_000,
+    });
+  }
   if (args.command === 'preview') {
     return request(origin, '/api/microduck/preview', {
       method: 'POST', headers: { 'content-type': 'application/json' },

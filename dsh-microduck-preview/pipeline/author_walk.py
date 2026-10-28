@@ -19,10 +19,8 @@ ranges come from the external asset repo (read-only):
 
     <asset_root>/src/mjlab_microduck/robot/microduck/robot_groundcontact.xml
 
-The geometric inspection follows ``mvi.robot.geometry`` (the same check the
-video pipeline uses) but is re-implemented on the raw MuJoCo model so that it
-takes well under a second, stays dependency-light (mujoco/numpy only), and does
-not need a review-bundle layout.
+Geometric inspection uses the real MuJoCo model directly and does not depend
+on any external skill or review-bundle layout.
 
 HONESTY RULE
 ------------
@@ -63,7 +61,7 @@ import numpy as np
 HZ = 50                       # authoring / motion.json rate
 DT = 1.0 / HZ
 
-DEFAULT_ASSET_ROOT = Path("/Users/founderlin/Desktop/RL研发/microduck-marseille")
+DEFAULT_ASSET_ROOT = Path(sys.executable).parent.parent.parent
 ROBOT_XML_REL = Path("src/mjlab_microduck/robot/microduck/robot_groundcontact.xml")
 
 # HOME_FRAME.joint_pos (STAND2 pose) copied from
@@ -240,8 +238,71 @@ def normalize_segments(segments) -> list[dict]:
                 radius = SEGMENT_MIN_TURN_RADIUS_M
             out.append({"kind": "turn", "turn_deg": round(deg, 2), "radius_m": round(radius, 4)})
             continue
+        if kind in ("hover", "悬停", "单脚", "单脚悬停"):
+            hover_foot = str(entry.get("hover_foot", entry.get("foot", "right"))).strip().lower()
+            if hover_foot in ("左脚", "l", "leftfoot"):
+                hover_foot = "left"
+            if hover_foot in ("右脚", "r", "rightfoot"):
+                hover_foot = "right"
+            if hover_foot not in ("left", "right"):
+                raise AuthorError(f"{label}.hover_foot 必须是 'left' 或 'right'")
+            lift = entry.get("lift_height_m", 0.04)
+            hold = entry.get("hold_s", 2.5)
+            try:
+                lift = float(lift)
+                hold = float(hold)
+            except (TypeError, ValueError):
+                raise AuthorError(f"{label} lift_height_m / hold_s 必须是数字")
+            lo, hi = HOVER_LIFT_RANGE_M
+            if lift < lo - 1e-9 or lift > hi + 1e-9:
+                raise AuthorError(f"{label}.lift_height_m={lift:g} 超出范围 [{lo:g}, {hi:g}]")
+            lo_h, hi_h = HOVER_HOLD_RANGE_S
+            if hold < lo_h - 1e-9 or hold > hi_h + 1e-9:
+                raise AuthorError(f"{label}.hold_s={hold:g} 超出范围 [{lo_h:g}, {hi_h:g}]")
+            out.append({
+                "kind": "hover",
+                "hover_foot": hover_foot,
+                "lift_height_m": round(lift, 4),
+                "hold_s": round(hold, 2),
+            })
+            continue
+        if kind in ("stand", "站立", "保持", "站住"):
+            hold = entry.get("hold_s", 1.0)
+            try:
+                hold = float(hold)
+            except (TypeError, ValueError):
+                raise AuthorError(f"{label}.hold_s 必须是数字")
+            lo_h, hi_h = HOVER_HOLD_RANGE_S
+            if hold < lo_h - 1e-9 or hold > hi_h + 1e-9:
+                raise AuthorError(f"{label}.hold_s={hold:g} 超出范围 [{lo_h:g}, {hi_h:g}]")
+            out.append({"kind": "stand", "hold_s": round(hold, 2)})
+            continue
+        if kind in ("sidestep", "侧移", "横移"):
+            side = str(entry.get("side", "left")).strip().lower()
+            if side in ("右", "right", "r"):
+                side = "right"
+            else:
+                side = "left"
+            raw = entry.get("length_m", entry.get("distance_m", 0.2))
+            try:
+                length = float(raw)
+            except (TypeError, ValueError):
+                raise AuthorError(f"{label}.length_m 必须是数字")
+            lo, hi = SEGMENT_STRAIGHT_RANGE
+            if length < lo - 1e-9 or length > hi + 1e-9:
+                raise AuthorError(f"{label}.length_m={length:g} 超出范围 [{lo:g}, {hi:g}]")
+            _SEGMENT_WARNINGS.append(
+                f"第 {index + 1} 段 sidestep 无横移步态，已降级为"
+                f"{'左转' if side == 'left' else '右转'} 90° 再直行 {length:.2f} m"
+            )
+            out.append({
+                "kind": "sidestep",
+                "side": side,
+                "length_m": round(length, 4),
+            })
+            continue
         raise AuthorError(
-            f"{label}.kind={entry.get('kind')!r} 无法识别；允许 straight / turn / left / right"
+            f"{label}.kind={entry.get('kind')!r} 无法识别；允许 straight / turn / left / right / sidestep / hover / stand"
         )
     return out
 
@@ -273,7 +334,7 @@ def validate_params(params: dict) -> dict:
         if hover_foot not in ("left", "right"):
             raise AuthorError(f"hover_foot 必须是 'left' 或 'right' (got {params.get('hover_foot')!r})")
         lo, hi = HOVER_LIFT_RANGE_M
-        lift = params.get("lift_height_m", 0.05)
+        lift = params.get("lift_height_m", 0.04)
         if isinstance(lift, bool) or not isinstance(lift, (int, float)):
             raise AuthorError(f"lift_height_m 必须是数字 (got {lift!r})")
         lift = float(lift)
@@ -335,7 +396,8 @@ class ModelBundle:
 
 
 def resolve_asset_root() -> Path:
-    root = Path(os.environ.get("MICRODUCK_ASSET_ROOT") or DEFAULT_ASSET_ROOT)
+    inferred = Path(sys.executable).parent.parent.parent
+    root = Path(os.environ.get("MICRODUCK_ASSET_ROOT") or (inferred if (inferred / ROBOT_XML_REL).is_file() else DEFAULT_ASSET_ROOT))
     xml = root / ROBOT_XML_REL
     if not xml.is_file():
         raise AuthorError(
@@ -396,7 +458,7 @@ def build_model() -> ModelBundle:
 
 
 def geom_min_z(m, d, g) -> float:
-    """Lowest world z of a geom (mirrors mvi.robot.geom_min_z)."""
+    """Lowest world z of a geom."""
     import mujoco
 
     kind = m.geom_type[g]
@@ -483,6 +545,31 @@ def _resample_path(kind: str, dense_xy: np.ndarray, dense_heading: np.ndarray,
     return TrajectoryPath(kind, uq, xyq, hq, lap_u, start_u, end_u - start_u)
 
 
+LOCO_KINDS = ("straight", "turn")
+POSE_KINDS = ("hover", "stand")
+
+
+def expand_locomotion_segment(segment: dict) -> list[dict]:
+    """Sidestep has no lateral gait; replace it with a 90° turn then a straight."""
+    kind = segment.get("kind")
+    if kind == "sidestep":
+        deg = 90.0 if segment.get("side") == "left" else -90.0
+        return [
+            {"kind": "turn", "turn_deg": deg, "radius_m": 0.12},
+            {"kind": "straight", "length_m": float(segment["length_m"])},
+        ]
+    if kind in LOCO_KINDS:
+        return [segment]
+    return []
+
+
+def locomotion_segments(segments: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for segment in segments:
+        out.extend(expand_locomotion_segment(segment))
+    return out
+
+
 def make_composite_path(segments: list[dict]) -> TrajectoryPath:
     """Root path for a segmented (straight / left / right) trajectory.
 
@@ -491,8 +578,9 @@ def make_composite_path(segments: list[dict]) -> TrajectoryPath:
     continuous by construction (C1 at every junction), which is what keeps the
     per-step body yaw change at the same magnitude as the verified arc case.
     """
+    segments = locomotion_segments(segments)
     if not segments:
-        raise AuthorError("composite 需要 segments")
+        raise AuthorError("composite 需要至少一段行走（straight / turn / sidestep）")
     ds = 0.001
     points: list[np.ndarray] = [np.zeros(2)]
     headings: list[float] = [0.0]
@@ -613,6 +701,7 @@ class GaitPlan:
     trimmed_from_laps: float
     path: TrajectoryPath
     cadence_compressed: bool = False
+    timeline_travel_m: float | None = None
 
     @property
     def step_s(self) -> float:
@@ -624,7 +713,7 @@ class GaitPlan:
 
     @property
     def travel_m(self) -> float:
-        return self.n_steps * self.step_m
+        return self.timeline_travel_m if self.timeline_travel_m is not None else self.n_steps * self.step_m
 
 
 def plan_gait(params: dict, path: TrajectoryPath) -> GaitPlan:
@@ -708,6 +797,155 @@ class Clip:
 
     def __len__(self):
         return len(self.yaw)
+
+
+def transform_clip(clip: Clip, origin_xy: np.ndarray, origin_yaw: float) -> Clip:
+    cosine, sine = math.cos(origin_yaw), math.sin(origin_yaw)
+    rotation = np.array([[cosine, -sine], [sine, cosine]])
+    out = Clip()
+    for index in range(len(clip)):
+        xy = np.asarray(origin_xy, float) + rotation @ clip.root_xy[index]
+        yaw = clip.yaw[index] + origin_yaw
+        feet = clip.feet[index].copy()
+        feet[:, :2] = np.asarray(origin_xy, float) + (rotation @ feet[:, :2].T).T
+        out.add(xy, clip.root_z[index], yaw, feet, clip.contact[index], clip.phase[index])
+    return out
+
+
+def append_clip(dst: Clip, src: Clip, *, skip_intro: bool, skip_outro: bool, labels=None) -> None:
+    start = 0
+    end = len(src)
+    if skip_intro:
+        while start < end and src.phase[start].startswith("intro"):
+            start += 1
+    if skip_outro:
+        while end > start and src.phase[end - 1].startswith("outro"):
+            end -= 1
+    if len(dst) and start < end:
+        # Blend the boundary through IK, keeping the whole timeline in one world
+        # frame. This is a kinematic transition, not a dynamic balance claim.
+        xy0, z0, yaw0 = dst.root_xy[-1].copy(), dst.root_z[-1], dst.yaw[-1]
+        feet0 = dst.feet[-1].copy()
+        for frame in range(1, 21):
+            w = smooth(frame / 21)
+            dst.add(xy0 * (1-w) + src.root_xy[start] * w,
+                    z0 * (1-w) + src.root_z[start] * w,
+                    yaw0 * (1-w) + src.yaw[start] * w,
+                    feet0 * (1-w) + src.feet[start] * w,
+                    np.minimum(dst.contact[-1], src.contact[start]), "transition")
+    for index in range(start, end):
+        phase = f"{labels[index]}|{src.phase[index]}" if labels else src.phase[index]
+        dst.add(src.root_xy[index], src.root_z[index], src.yaw[index],
+                src.feet[index], src.contact[index], phase)
+
+
+def build_stand_clip(hold_s: float, root_xy, root_z: float, yaw: float, feet) -> Clip:
+    frames = max(10, int(round(float(hold_s) * HZ)))
+    clip = Clip()
+    planted = np.asarray(feet, float)
+    for _ in range(frames):
+        clip.add(root_xy, root_z, yaw, planted, [1.0, 1.0], "stand_hold")
+    return clip
+
+
+def path_from_clip(clip: Clip) -> TrajectoryPath:
+    xy = np.asarray(clip.root_xy, float)
+    heading = np.asarray(clip.yaw, float)
+    if len(xy) < 2:
+        xy = np.vstack([xy, xy + np.array([1e-4, 0.0])])
+        heading = np.r_[heading, heading]
+    return _resample_path("composite", xy, heading, 0.0, float(
+        np.linalg.norm(np.diff(xy, axis=0), axis=1).sum() or 1e-6
+    ), max(float(np.linalg.norm(np.diff(xy, axis=0), axis=1).sum()), 1e-6))
+
+
+def plan_from_timeline(params: dict, clip: Clip, path: TrajectoryPath) -> GaitPlan:
+    moving = sum(1 for phase in clip.phase if "step" in phase)
+    step_frames = max(8, round(BASE_STEP_TIME[params["speed"]] * HZ)) if moving else 0
+    return GaitPlan(
+        n_steps=round(moving / step_frames) if step_frames else 0,
+        step_m=float(params["step_length_m"]),
+        step_frames=step_frames,
+        intro_frames=0,
+        outro_frames=0,
+        swing_h=0.0,
+        duration_s=round(len(clip) * DT, 3),
+        total_frames=len(clip),
+        trimmed=False,
+        trimmed_from_laps=0.0,
+        path=path,
+        timeline_travel_m=path.total_length,
+    )
+
+
+def build_timeline_clip(params: dict) -> Clip:
+    """Author locomotion and pose segments onto one clip, in user order."""
+    segments = list(params.get("segments") or [])
+    out = Clip()
+    origin_xy = np.zeros(2)
+    origin_yaw = 0.0
+    home_feet = np.array([
+        [0.0, HOME_STANCE_HALF_WIDTH_M, float(HOME_FOOT_Z) + STANCE_TARGET_LIFT_M],
+        [0.0, -HOME_STANCE_HALF_WIDTH_M, float(HOME_FOOT_Z) + STANCE_TARGET_LIFT_M],
+    ])
+    root_z = plan_homez() - ROOT_CROUCH_M
+    index = 0
+    first = True
+    while index < len(segments):
+        segment = segments[index]
+        last_group = index == len(segments) - 1
+        if segment["kind"] in POSE_KINDS:
+            if segment["kind"] == "hover":
+                hover_params = {
+                    "pattern": "hover",
+                    "direction": params.get("direction", "forward"),
+                    "step_length_m": params["step_length_m"],
+                    "speed": params.get("speed", "normal"),
+                    "hover_foot": segment["hover_foot"],
+                    "lift_height_m": segment["lift_height_m"],
+                    "hold_s": segment["hold_s"],
+                }
+                part = build_hover_clip(hover_params, plan_hover(hover_params))
+                part = transform_clip(part, origin_xy, origin_yaw)
+            else:
+                feet = out.feet[-1].copy() if len(out) else home_feet
+                xy = out.root_xy[-1].copy() if len(out) else origin_xy
+                yaw = out.yaw[-1] if len(out) else origin_yaw
+                z_value = out.root_z[-1] if len(out) else root_z
+                part = build_stand_clip(segment["hold_s"], xy, z_value, yaw, feet)
+            append_clip(out, part, skip_intro=not first, skip_outro=not last_group, labels=[f"segment{index}:{segment['kind']}"] * len(part))
+            if len(part):
+                origin_xy = part.root_xy[-1].copy()
+                origin_yaw = part.yaw[-1]
+            first = False
+            index += 1
+            continue
+        loco: list[dict] = []
+        loco_labels = []
+        while index < len(segments) and segments[index]["kind"] not in POSE_KINDS:
+            expanded = expand_locomotion_segment(segments[index])
+            loco.extend(expanded)
+            loco_labels.extend([f"segment{index}:{v['kind']}" for v in expanded])
+            index += 1
+        last_group = index >= len(segments)
+        path = make_composite_path(loco)
+        plan = plan_gait({**params, "pattern": "composite", "segments": loco}, path)
+        part = build_clip({**params, "pattern": "composite"}, plan)
+        if not first:
+            part = transform_clip(part, origin_xy, origin_yaw)
+        lengths = [v["length_m"] if v["kind"] == "straight" else abs(math.radians(v["turn_deg"])) * v["radius_m"] for v in loco]
+        bounds = np.cumsum(lengths)
+        labels = []
+        for frame in range(len(part)):
+            progress = max(0, frame - plan.intro_frames) / max(1, plan.n_steps * plan.step_frames) * plan.travel_m
+            labels.append(loco_labels[min(len(loco_labels)-1, int(np.searchsorted(bounds, progress)))])
+        append_clip(out, part, skip_intro=not first, skip_outro=not last_group, labels=labels)
+        origin_xy = part.root_xy[-1].copy()
+        origin_yaw = part.yaw[-1]
+        first = False
+    if not len(out):
+        raise AuthorError("composite 时间轴为空")
+    return out
 
 
 def build_clip(params: dict, plan: GaitPlan) -> Clip:
@@ -1019,7 +1257,7 @@ def solve_ik(modelb: ModelBundle, clip: Clip, margin_deg: float | None = None,
 
 
 # --------------------------------------------------------------------------- #
-# geometric inspection (mirrors mvi.robot.geometry, seconds-scale)
+# geometric inspection of the real model
 # --------------------------------------------------------------------------- #
 def check_geometry(modelb: ModelBundle, motion: dict, verbose: bool = False) -> dict:
     import mujoco
@@ -1167,7 +1405,7 @@ def _fallback_attempts(params: dict):
     base = {key: value for key, value in requested.items() if key != "segments"}
     attempts = []
     if pattern == "hover":
-        lift = float(params.get("lift_height_m", 0.05))
+        lift = float(params.get("lift_height_m", 0.04))
         attempts.append(({**requested, "lift_height_m": min(lift, 0.03), "hold_s": 1.5},
                          f"该悬停姿态几何不可行，已降低抬脚高度到 {min(lift, 0.03):.2f} m 并缩短保持时间"))
     if pattern == "composite":
@@ -1242,13 +1480,21 @@ def _describe_failure(geometry: dict, limit: int = 2) -> str:
 def _pattern_label(p: dict) -> str:
     if p.get("pattern") == "hover":
         return (f"hover({'左脚' if p.get('hover_foot') == 'left' else '右脚'}抬起 "
-                f"{float(p.get('lift_height_m', 0.05)) * 100:.0f}cm · 保持 "
+                f"{float(p.get('lift_height_m', 0.04)) * 100:.0f}cm · 保持 "
                 f"{float(p.get('hold_s', 2.5)):g}s)")
     if p.get("pattern") == "composite":
         parts = []
         for seg in p.get("segments") or []:
-            if seg.get("kind") == "straight":
+            kind = seg.get("kind")
+            if kind == "straight":
                 parts.append(f"直行{seg['length_m']*1000:.0f}mm")
+            elif kind == "sidestep":
+                parts.append(f"{'左侧移' if seg.get('side') == 'left' else '右侧移'}{float(seg['length_m'])*1000:.0f}mm")
+            elif kind == "hover":
+                foot = "左脚" if seg.get("hover_foot") == "left" else "右脚"
+                parts.append(f"悬停抬{foot}{float(seg.get('hold_s', 0)):g}s")
+            elif kind == "stand":
+                parts.append(f"站立{float(seg.get('hold_s', 0)):g}s")
             else:
                 side = "左转" if float(seg["turn_deg"]) >= 0 else "右转"
                 parts.append(f"{side}{abs(float(seg['turn_deg'])):.0f}°(R={float(seg['radius_m']):.2f}m)")
@@ -1344,6 +1590,10 @@ def _author_once(params: dict, modelb: ModelBundle) -> tuple[dict, dict, GaitPla
             plan = plan_hover(candidate)
             path = plan.path
             clip = build_hover_clip(candidate, plan)
+        elif candidate["pattern"] == "composite":
+            clip = build_timeline_clip(candidate)
+            path = path_from_clip(clip)
+            plan = plan_from_timeline(candidate, clip, path)
         else:
             path = make_path(candidate["pattern"], float(candidate.get("radius_m") or 0.10),
                              float(candidate.get("laps") or 1.0), candidate.get("segments"))
@@ -1416,13 +1666,16 @@ def author_motion(params: dict) -> AuthorResult:
                     warnings.append(
                         f"该抬脚高度下关节余量仅 "
                         f"{geometry['checks']['min_joint_margin_deg']:.1f}°（接近限位）；"
-                        "建议 lift_height_m 用 0.05（实测余量约 9°）"
+                        "建议 lift_height_m 用 0.04（默认余量最稳）"
                     )
             if plan.path.kind == "composite":
                 turns = sum(1 for s in (params.get("segments") or []) if s.get("kind") == "turn")
+                poses = sum(1 for s in (params.get("segments") or []) if s.get("kind") in POSE_KINDS)
                 warnings.append(
-                    f"复合轨迹：{len(params.get('segments') or [])} 段（{turns} 次转弯曲率连续 C1），"
-                    f"总长 {path.total_length:.2f} m，每步机身转角 ≈ 弧长/半径，与已验证的 arc 同一量级"
+                    f"复合轨迹：{len(params.get('segments') or [])} 段"
+                    f"（{turns} 次转弯"
+                    f"{f'，{poses} 段姿态' if poses else ''}），"
+                    f"总长 {path.total_length:.2f} m"
                 )
             if plan.path.kind == "figure8":
                 warnings.append(

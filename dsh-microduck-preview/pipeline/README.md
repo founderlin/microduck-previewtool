@@ -14,7 +14,7 @@
 | 解释器 | `/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python` (Python 3.12.13) |
 | Python 依赖 | mujoco 3.10.0 · numpy 2.4.1 · scipy 1.18.0 · imageio 2.37.2 · Pillow 12.2.0 · imageio-ffmpeg 0.6.0（自带 ffmpeg，用于 +faststart 重封装） |
 | 机器人资产 | `microduck-marseille` 仓库（只读）：`src/mjlab_microduck/robot/microduck/robot_groundcontact.xml` |
-| 默认资产根 | `/Users/founderlin/Desktop/RL研发/microduck-marseille` |
+| 默认资产根 | `/Users/founderlin/agent_zoo/microduck_rl-develop` |
 | 资产根覆盖 | 环境变量 `MICRODUCK_ASSET_ROOT` |
 | 平台 | macOS arm64（MuJoCo 经典 offscreen 渲染器；训练/训练依赖**不需要**，不 import mjlab/torch） |
 
@@ -112,7 +112,7 @@ Host 已经做过范围校验；管线这里仍会**防御性再校验一次**�
 
 ## 5. 几何检查（秒级，真实执行）
 
-对 `motion.json` 的每一帧 `mj_forward` 后检查（判定口径与视频管线 `mvi.robot.geometry` 一致）：
+对 `motion.json` 的每一帧 `mj_forward` 后检查（直接检查真实 MuJoCo 模型）：
 
 | 检查 | 失败阈值 | metrics 字段 |
 |---|---|---|

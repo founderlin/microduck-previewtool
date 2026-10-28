@@ -64,7 +64,7 @@ MIN_SIZE = 64
 DEFAULT_QUALITY = 85
 MAX_RENDERER_CACHE = 4
 
-DEFAULT_ASSET_ROOT = Path("/Users/founderlin/Desktop/RL研发/microduck-marseille")
+DEFAULT_ASSET_ROOT = Path(sys.executable).parent.parent.parent
 ROBOT_XML_REL = Path("src/mjlab_microduck/robot/microduck/robot_groundcontact.xml")
 
 # Checkerboard ground (matches the recorded-mp4 renderer so the viewer and the

@@ -42,6 +42,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import command_track
+
 # rendering / packaging settings
 FPS = 25
 RENDER_STRIDE = 2            # keep every 2nd 50 Hz frame -> 25 fps
@@ -606,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # evidence artifacts for debugging; the Host only needs preview.mp4+metrics.json
         write_json(out_dir / "motion.json", result.motion)
+        write_json(out_dir / "command.json", command_track.command_from_motion(result.motion))
         write_json(out_dir / "authoring_report.json", author_walk.authoring_report(
             result, {"run_preview_authoring_s": round(author_seconds, 2)}))
 

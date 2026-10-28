@@ -11,6 +11,11 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
+import { workbenchConfig, ROBOT_XML_REL } from './lib/runtime.js';
+import { listRewards, addReward, removeReward, setReward, catalogTerm, validateCatalog } from './lib/rewards.js';
+import { packTask, explainTerm, verifyOwnedPack } from './lib/pack.js';
+import { ownedTask, sessionId } from './lib/workbench.js';
 import { fileURLToPath } from 'node:url';
 
 import { PreviewStore } from './lib/tasks.js';
@@ -110,7 +115,7 @@ function toolValue(record) {
     geometry_ok: typeof metrics?.geometry_ok === 'boolean' ? metrics.geometry_ok : undefined,
     degraded: typeof metrics?.degraded === 'boolean' ? metrics.degraded : undefined,
     degrade_reason: metrics?.degrade_reason ?? undefined,
-    warnings: Array.isArray(record.warnings) && record.warnings.length > 0 ? record.warnings : undefined,
+    warnings: [...new Set([...(record.warnings ?? []), ...(record.metrics?.warnings ?? [])])],
     elapsed_s: Number.isFinite(record.elapsed_s) ? record.elapsed_s : undefined,
     error: record.error ?? undefined,
     summary: summaryText(record),
@@ -118,8 +123,8 @@ function toolValue(record) {
 }
 
 /** Recent task params, the input to the "tweak one field" flow. */
-function recentTasks(store, limit = 5) {
-  return store.list(limit).map((record) => compact({
+function recentTasks(store, limit = 5, owner) {
+  return (owner ? store.listForSession(owner, limit) : []).map((record) => compact({
     task_id: record.id,
     status: record.status,
     created_at: record.created_at,
@@ -222,8 +227,9 @@ export function apply(ctx, config = {}) {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
-    async execute() {
-      return JSON.stringify(buildTemplates({ recentTasks: recentTasks(store, 5) }), null, 2);
+    async execute(_args, exec) {
+      const owner = exec?.agent?.id ? String(exec.agent.id) : undefined;
+      return JSON.stringify(buildTemplates({ recentTasks: recentTasks(store, 5, owner) }), null, 2);
     },
   });
 
@@ -292,7 +298,7 @@ export function apply(ctx, config = {}) {
           description:
             'Only for pattern="composite": ordered moves in one clip. Each item is either ' +
             '{"kind":"straight","length_m":0.35} or {"kind":"turn","turn_deg":90,"radius_m":0.12} ' +
-            '(turn_deg positive = left, negative = right; also accepts kind="left"/"right"). ' +
+            '(turn_deg positive = left, negative = right; also accepts kind="left"/"right"); hover uses hover_foot/lift_height_m/hold_s; stand uses hold_s; sidestep uses side/length_m and explicitly degrades to turn then straight. ' +
             'Omit it to get forward 0.35 m → left 90° → right 90°.',
           items: {
             type: 'object',
@@ -301,9 +307,13 @@ export function apply(ctx, config = {}) {
             properties: {
               kind: {
                 type: 'string',
-                enum: ['straight', 'turn', 'left', 'right'],
+                enum: ['straight', 'turn', 'left', 'right', 'sidestep', 'hover', 'stand'],
                 description: 'straight = 直行（用 length_m）, turn = 按 turn_deg 正负转弯, left/right = 强制左/右转.',
               },
+              side: { type: 'string', enum: ['left', 'right'] },
+              hover_foot: { type: 'string', enum: ['left', 'right'] },
+              lift_height_m: { type: 'number', minimum: 0.02, maximum: 0.08 },
+              hold_s: { type: 'number', minimum: 0.5, maximum: 5 },
               length_m: { type: 'number', description: 'Straight length in metres, 0.05–1.5.' },
               turn_deg: { type: 'number', description: 'Turn angle in degrees, ±(0.1–180); positive = left (counter-clockwise).' },
               radius_m: { type: 'number', description: 'Turn radius in metres, 0.06–0.30 (this robot turns reliably at ≥0.10).' },
@@ -321,7 +331,8 @@ export function apply(ctx, config = {}) {
     async execute(args, exec) {
       // Tuning closed loop: fields the model omitted inherit the previous task,
       // so "圈再大一点" can pass only radius_m. Explicit values always win.
-      const previous = store.list(1)[0];
+      const owner = sessionId(String(exec.agent?.id ?? ''));
+      const previous = store.listForSession(owner).find((r) => r.status !== 'error');
       const { merged, inherited } = inheritParams(args, previous?.params);
       const { params, warnings: validationWarnings } = validateInput(merged);
       const warnings = [...validationWarnings];
@@ -362,10 +373,10 @@ export function apply(ctx, config = {}) {
       schema: RESULT_SCHEMA,
       render: (_args, value) => [{ type: 'text', text: value.summary }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const taskId = typeof args?.task_id === 'string' ? args.task_id.trim() : '';
       if (!taskId) throw new Error('task_id 不能为空：请传入 duck_preview 返回的 task_id。');
-      const record = store.get(taskId);
+      const record = ownedTask(store, taskId, sessionId(String(exec?.agent?.id ?? '')));
       if (!record) {
         const known = store.list(5).map((item) => item.id);
         throw new Error(
@@ -376,6 +387,36 @@ export function apply(ctx, config = {}) {
       return toolValue(record);
     },
   });
+
+  // Workbench tools use the same implementations and task recipes as the UI.
+  const wbConfig = workbenchConfig(store);
+  const ownerOf = (exec) => sessionId(String(exec?.agent?.id ?? ''));
+  const structuredOutput = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] };
+  const register = (name, description, properties, execute) => ctx.tools.register({ name, description,
+    parameters: { type: 'object', properties, additionalProperties: false }, output: structuredOutput,
+    timeoutMs: 190000, isConcurrencySafe: () => false,
+    async execute(args, exec) { return JSON.stringify(await execute(args, ownerOf(exec))); } });
+  register('duck_doctor', 'Inspect runtime assets, interpreter and real reward function signatures; never starts PPO.', {}, () => ({
+    python: store.python, assetsRoot: store.assetsRoot, robot_xml: fs.existsSync(path.join(store.assetsRoot, ROBOT_XML_REL)),
+    rewards: validateCatalog(wbConfig, true), bam_preflight_available: fs.existsSync(path.join(store.assetsRoot, 'scripts/train_microduck_cpu.py')), engine: store.resolveEngine(),
+  }));
+  register('duck_rewards', 'List/add/remove/set task-bound reward cards. Only existing training functions; signs and parameter names are validated. Changes create immutable recipe versions, never train.', {
+    task_id: { type: 'string' }, action: { type: 'string', enum: ['list', 'add', 'remove', 'set'] }, id: { type: 'string' }, weight: { type: 'number' }, params: { type: 'object' }, active_phases: { type: 'array', items: { type: 'string', enum: ['all', 'walk', 'turn', 'hover', 'stand', 'transition'] } },
+  }, (args, owner) => {
+    const record = args.task_id ? ownedTask(store, args.task_id, owner) : store.listForSession(owner)[0];
+    if (!record) throw new Error('先创建当前对话的动作任务。');
+    const p = record.params.pattern;
+    if (!args.action || args.action === 'list') return listRewards(wbConfig, owner, p, record.id);
+    if (args.action === 'set') return setReward(wbConfig, owner, args.id, args, p, record.id);
+    return (args.action === 'add' ? addReward : removeReward)(wbConfig, owner, args.id, p, record.id);
+  });
+  register('duck_explain', 'Render a cached reference/perturbation clip scored by the actual training callable. Unavailable sensor/torque terms are training_only; never predict a learned policy.', { task_id: { type: 'string' }, id: { type: 'string' } }, async (args, owner) => {
+    const record = ownedTask(store, args.task_id, owner); const term = catalogTerm(wbConfig, args.id);
+    const selected = listRewards(wbConfig, owner, record.params.pattern, record.id).selection.find((t) => t.id === term.id);
+    return explainTerm(wbConfig, record, { ...term, selected });
+  });
+  register('duck_pack', 'Export motion, commands, enabled rewards, criteria, physical precheck and a hash-bound review. Runs the training repository BAM baseline; reports failures. Does not approve or start PPO.', { task_id: { type: 'string' } }, (args, owner) => packTask(wbConfig, ownedTask(store, args.task_id, owner), owner));
+  register('duck_verify', 'Verify an exported pack against artifact, robot, reward-function and tool hashes. Read-only; never approves or starts training.', { pack_id: { type: 'string' } }, (args, owner) => verifyOwnedPack(wbConfig, args.pack_id, owner));
 
   logger('ready', {
     dataDir: store.tasksDir,

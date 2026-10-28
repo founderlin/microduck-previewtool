@@ -9,6 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { test } from 'node:test';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -16,9 +17,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { FramePool } from '../lib/frames.js';
+import { inferAssetsRoot } from '../lib/runtime.js';
 import { createApiHandler } from '../lib/http.js';
 import { PreviewStore } from '../lib/tasks.js';
 
+if (process.env.MICRODUCK_FRAME_INTEGRATION !== '1' && !/^\d{8}-/.test(process.argv[2] ?? '')) {
+  test('real MuJoCo frame integration (MICRODUCK_FRAME_INTEGRATION=1)', { skip: true }, () => {});
+} else {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, '..');
 const tasksRoot = path.join(os.homedir(), '.dsh', 'microduck-preview', 'tasks');
@@ -49,7 +54,7 @@ console.log(`task ${taskId} · ${duration.toFixed(2)}s`);
 
 const python = process.env.MICRODUCK_PYTHON
   ?? '/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python';
-const assetRoot = '/Users/founderlin/Desktop/RL研发/microduck-marseille';
+const assetRoot = process.env.MICRODUCK_ASSET_ROOT ?? inferAssetsRoot(python);
 
 const pool = new FramePool({ python, assetRoot, pluginDir: repo, logger: (...a) => console.error('[pool]', ...a) });
 const started = Date.now();
@@ -159,4 +164,6 @@ try {
   console.log('frame service checks passed');
 } finally {
   pool.dispose();
+}
+
 }

@@ -4,12 +4,16 @@ Requires Node.js 22.19 or newer, an executable Python with `mujoco`, `numpy`, `s
 
 ## Directory and installation
 
-Keep the two folders beside one another:
+Keep the shared plugin, parent and four child skill folders together:
 
 ```text
 microduck-previewtool/
   dsh-microduck-preview/
   codex-microduck-preview/
+  microduck-preview-runtime/
+  microduck-motion-compose/
+  microduck-reward-studio/
+  microduck-train-pack/
   .runtime/codex/       # created at runtime, excluded from source control
 ```
 
@@ -65,3 +69,26 @@ Open the returned `viewer_url` in Codex's built-in browser, preferably on the ri
 Use the viewer's `导出 MP4` link for browser download, or the task's `video_path` for local file delivery. Video requests support HTTP Range for seeking. Task artifacts remain under `<dataDir>/tasks/<task_id>/`, including parameters, motion, metrics, preview MP4, and logs. Keep exported deliverables in a user-requested location rather than copying runtime internals into unrelated projects.
 
 The web viewer has no dependency on a logged-in DSH page. Its appearance matches the approved concept's right-side preview panel; Codex's own conversation layout remains controlled by Codex. Inline native custom cards are not claimed. `DEMO` content is a sample clip, degradation describes the actual substituted motion, and a geometric pass is not a dynamic stability or real-robot safety result.
+
+## Motion workbench
+
+The parent routes to four sibling skills: runtime, motion-compose, reward-studio and train-pack. The installer installs all five links; `--cursor` selects `~/.cursor/skills`. Keep these folders alongside the DSH package. `CURSOR_CHAT_ID` is accepted when `CODEX_THREAD_ID` is absent; otherwise pass the current chat id explicitly.
+
+Assets are inferred from the selected Python venv. Port `47832` is only preferred; occupied ports trigger an ephemeral loopback port. Always use the returned URL. The two hosts serve the same workbench assets from `dsh-microduck-preview/assets`.
+
+```sh
+node scripts/microduck.mjs preview --session example-chat --params '{"pattern":"composite","segments":[{"kind":"straight","length_m":0.2},{"kind":"hover","hover_foot":"right","lift_height_m":0.04,"hold_s":2},{"kind":"stand","hold_s":1}]}'
+node scripts/microduck.mjs rewards list --session example-chat --task TASK_ID
+node scripts/microduck.mjs rewards set --session example-chat --task TASK_ID --id upright --weight 2.5 --params '{"std":0.25}' --phases hover,stand
+node scripts/microduck.mjs rewards explain --session example-chat --task TASK_ID --id upright
+node scripts/microduck.mjs pack --session example-chat --task TASK_ID
+node scripts/microduck.mjs verify --pack /absolute/pack-directory
+```
+
+`command.json` is frame-aligned with the motion, including vx/wz, stages and support feet. Composite segments accept straight, turn, hover and stand; sidestep explicitly substitutes a 90° turn followed by straight travel. Timeline editing provides insertion, deletion and reordering. Command curves describe the authored reference, not a sampled training policy.
+
+Reward selections are per task and session, with immutable versions. Function and parameter names resolve against the configured training Python and checkout. Invalid functions stay disabled. Explain clips use actual training functions on labeled kinematic inputs; unavailable sensor or torque terms show training_only. They do not predict the effect of changing a policy's reward weight.
+
+`pack` invokes `scripts/train_microduck_cpu.py` runtime helpers from the training checkout, uses its registered velocity environment and original BAM actuator, and writes a fresh review directory. It never creates a PPO runner. Initial reference pose is written once; subsequent steps apply normal actions with a free root, normal BAM delays and friction. First terminal stops measurement. `physics.json` separates runtime failure, geometry eligibility, and completion of the baseline. Baseline failure is a risk requiring review, not proof that learning is impossible. `verify` detects changed artifacts, robot sources or workbench tools.
+
+Optional JSON settings: `preflightTask` (default `Mjlab-Velocity-Flat-MicroDuck`), `preflightSeeds` (default `[123,2026]`, maximum four), and `taskCriteria`. All unspecified task thresholds remain null. Exported command/reward/criteria files require explicit import by the training workflow. There is no training, approval or deployment command here.

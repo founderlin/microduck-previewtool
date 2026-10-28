@@ -16,6 +16,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { inferAssetsRoot, DEFAULT_PYTHON } from './runtime.js';
+import { loadSelection } from './rewards.js';
 
 const MAX_LOG_TAIL = 1600;
 const DEMO_RENDER_MS = 2200;
@@ -91,8 +93,8 @@ export class PreviewStore {
     this.config = options.config ?? {};
     this.logger = options.logger ?? ((...args) => console.error('[microduck]', ...args));
     this.tasksDir = path.join(expandHome(this.config.dataDir ?? '~/.dsh/microduck-preview'), 'tasks');
-    this.assetsRoot = expandHome(this.config.assetsRoot ?? '/Users/founderlin/Desktop/RL研发/microduck-marseille');
-    this.python = expandHome(this.config.python ?? '/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python');
+    this.python = expandHome(this.config.python ?? process.env.MICRODUCK_PYTHON ?? DEFAULT_PYTHON);
+    this.assetsRoot = expandHome(this.config.assetsRoot ?? process.env.MICRODUCK_ASSET_ROOT ?? inferAssetsRoot(this.python));
     this.demoVideoOverride = this.config.demoVideo ? expandHome(this.config.demoVideo) : null;
     this.engineSetting = this.config.engine ?? 'auto';
     this.waitMs = Number.isFinite(this.config.waitMs) ? this.config.waitMs : 90_000;
@@ -155,7 +157,7 @@ export class PreviewStore {
 
   /** Persist a record's public view (the `_dir` handle is not serialised). */
   persist(record) {
-    const { _dir, ...rest } = record;
+    const { _dir, _child, ...rest } = record;
     try {
       writeJsonAtomic(path.join(this.tasksDir, record.id, 'task.json'), rest);
     } catch (error) {
@@ -319,6 +321,10 @@ export class PreviewStore {
       exit_code: null,
     });
     this.tasks.set(id, record);
+    if (record.session_id && fs.existsSync(path.join(this.pluginDir, 'rewards/catalog.json'))) {
+      const recipe = loadSelection({ ...this.config, pluginDir: this.pluginDir, dataDir: path.dirname(this.tasksDir), python: this.python, assetsRoot: this.assetsRoot }, record.session_id, params.pattern, id);
+      record.initial_reward_version = recipe.version;
+    }
     this.persist(record);
     this.queue.push(record);
     this.pump();
@@ -391,6 +397,7 @@ export class PreviewStore {
     this.persist(record);
     if (record.engine === 'real') await this.runReal(record);
     else await this.runDemo(record);
+    if (record.status === 'error') return;
     this.hydrate(record);
     record.finished_at = nowIso();
     record.status = 'done';
@@ -513,7 +520,7 @@ export class PreviewStore {
   /** Shut the runner down (plugin unload). */
   dispose() {
     if (this.running) this.cancel(this.running, '插件卸载，渲染中断');
-    for (const record of this.queue) this.cancel(record, '插件卸载，渲染中断');
+    for (const record of [...this.queue]) this.cancel(record, '插件卸载，渲染中断');
     this.queue = [];
   }
 }

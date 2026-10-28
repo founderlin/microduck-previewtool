@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Microduck gait motion preview for DeepSeek Harness: two agent tools (duck_templates, duck_preview) that run a MuJoCo pipeline in the background, plus a Web viewer panel that streams the resulting mp4.",
+  "description": "Microduck action workbench for DSH: timelines, real MuJoCo preview, task-bound reward recipes, explanation clips and BAM review packs.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -19,7 +19,10 @@
     "icon.svg",
     "pipeline/*.py",
     "pipeline/README.md",
-    "README.md"
+    "README.md",
+    "assets/*",
+    "rewards/*.json",
+    "pipeline/ready.json"
   ],
   "engines": {
     "node": ">=22.19"
@@ -33,5 +36,9 @@
       "immediately": true,
       "inject": []
     }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:frames": "MICRODUCK_FRAME_INTEGRATION=1 node test/frames.test.mjs"
   }
 }

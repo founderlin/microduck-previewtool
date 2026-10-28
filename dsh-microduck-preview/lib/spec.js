@@ -74,7 +74,7 @@ export const PARAM_SPEC = {
     default: null,
     zh: '分段轨迹',
     en: 'segments',
-    help: '仅 composite 使用：直行 + 左/右转的序列，例如「先直走 0.35 m，再左转 90°，再右转 90°」',
+    help: '仅 composite 使用：直行 / 转弯 / 侧移（降级为转弯+直行）/ 悬停 / 站立保持 的时间轴',
   },
   hover_foot: {
     type: 'enum',
@@ -123,7 +123,21 @@ const SEGMENT_LIMITS = {
   straight: { min: 0.05, max: 1.5 },
   turnDeg: { min: 0.1, max: 180 },
   turnRadius: { min: 0.06, max: 0.3 },
+  hoverLift: { min: 0.02, max: 0.08 },
+  hold: { min: 0.5, max: 5 },
 };
+
+const PATTERN_FIELDS = {
+  line: ['pattern', 'direction', 'step_length_m', 'laps', 'speed'],
+  arc: ['pattern', 'direction', 'step_length_m', 'radius_m', 'laps', 'speed'],
+  figure8: ['pattern', 'direction', 'step_length_m', 'radius_m', 'laps', 'speed'],
+  composite: ['pattern', 'direction', 'step_length_m', 'speed', 'segments'],
+  hover: ['pattern', 'speed', 'hover_foot', 'lift_height_m', 'hold_s'],
+};
+
+export function fieldsForPattern(pattern) {
+  return PATTERN_FIELDS[pattern] ?? PARAM_ORDER;
+}
 
 /** Chinese (and English spelling) synonyms the tool normalises before validating. */
 const SYNONYMS = {
@@ -157,7 +171,7 @@ const SYNONYMS = {
 /** Human-readable range/description for one spec entry. */
 function describeRange(spec) {
   if (spec.type === 'enum') return `${spec.values.join(' | ')}`;
-  if (spec.type === 'segments') return '直行 + 左/右转 的序列（最多 6 段）';
+  if (spec.type === 'segments') return '直行 / 转弯 / 侧移 / 悬停 / 站立 的序列（最多 6 段）';
   const unit = spec.unit ? ` ${spec.unit}` : '';
   return `${spec.min}–${spec.max}${unit}`;
 }
@@ -198,9 +212,65 @@ function normalizeSegment(entry, index) {
       : rawKind === 'turn' || rawKind === '转弯' || rawKind === '转向'
         ? 'turn'
         : '';
+  if (rawKind === 'hover' || rawKind === '悬停' || rawKind === '单脚' || rawKind === '单脚悬停') {
+    const allowed = ['hover_foot', 'foot', 'lift_height_m', 'hold_s'];
+    const unknownHover = Object.keys(args).filter((key) => !allowed.includes(key));
+    if (unknownHover.length) {
+      throw new Error(`${label}（悬停）不支持字段：${unknownHover.join(', ')}。只允许 ${allowed.join(' / ')}。`);
+    }
+    const foot = normalizeEnum('hover_foot', args.hover_foot ?? args.foot ?? 'right');
+    if (!PARAM_SPEC.hover_foot.values.includes(foot)) {
+      throw new Error(`${label}.hover_foot 必须是 left 或 right。`);
+    }
+    const lift = Number(args.lift_height_m ?? PARAM_SPEC.lift_height_m.default);
+    const hold = Number(args.hold_s ?? PARAM_SPEC.hold_s.default);
+    if (!Number.isFinite(lift) || lift < SEGMENT_LIMITS.hoverLift.min || lift > SEGMENT_LIMITS.hoverLift.max) {
+      throw new Error(`${label}.lift_height_m 超出范围 ${SEGMENT_LIMITS.hoverLift.min}–${SEGMENT_LIMITS.hoverLift.max} m。`);
+    }
+    if (!Number.isFinite(hold) || hold < SEGMENT_LIMITS.hold.min || hold > SEGMENT_LIMITS.hold.max) {
+      throw new Error(`${label}.hold_s 超出范围 ${SEGMENT_LIMITS.hold.min}–${SEGMENT_LIMITS.hold.max} s。`);
+    }
+    return {
+      kind: 'hover',
+      hover_foot: foot,
+      lift_height_m: Math.round(lift * 1000) / 1000,
+      hold_s: Math.round(hold * 100) / 100,
+    };
+  }
+
+  if (rawKind === 'stand' || rawKind === '站立' || rawKind === '保持' || rawKind === '站住') {
+    const allowed = ['hold_s'];
+    const unknownStand = Object.keys(args).filter((key) => !allowed.includes(key));
+    if (unknownStand.length) {
+      throw new Error(`${label}（站立）不支持字段：${unknownStand.join(', ')}。只允许 hold_s。`);
+    }
+    const hold = Number(args.hold_s ?? 1);
+    if (!Number.isFinite(hold) || hold < SEGMENT_LIMITS.hold.min || hold > SEGMENT_LIMITS.hold.max) {
+      throw new Error(`${label}.hold_s 超出范围 ${SEGMENT_LIMITS.hold.min}–${SEGMENT_LIMITS.hold.max} s。`);
+    }
+    return { kind: 'stand', hold_s: Math.round(hold * 100) / 100 };
+  }
+
+  if (rawKind === 'sidestep' || rawKind === '侧移' || rawKind === '横移') {
+    const allowed = ['side', 'length_m', 'distance_m'];
+    const unknownSide = Object.keys(args).filter((key) => !allowed.includes(key));
+    if (unknownSide.length) {
+      throw new Error(`${label}（侧移）不支持字段：${unknownSide.join(', ')}。只允许 ${allowed.join(' / ')}。`);
+    }
+    const sideRaw = String(args.side ?? 'left').trim().toLowerCase();
+    if (!['left', 'right', '左', '右'].includes(sideRaw)) throw new Error(`${label}.side 必须是 left 或 right。`);
+    const side = sideRaw === 'right' || sideRaw === '右' ? 'right' : 'left';
+    const length = Number(args.length_m ?? args.distance_m ?? 0.2);
+    const { min, max } = SEGMENT_LIMITS.straight;
+    if (!Number.isFinite(length) || length < min || length > max) {
+      throw new Error(`${label}.length_m 超出范围 ${min}–${max} m。`);
+    }
+    return { kind: 'sidestep', side, length_m: Math.round(length * 1000) / 1000 };
+  }
+
   if (!turnKind) {
     throw new Error(
-      `${label}.kind=${JSON.stringify(entry.kind)} 无法识别。允许：straight（直行）| turn（按 turn_deg 正负转弯）| left（左转）| right（右转）。`,
+      `${label}.kind=${JSON.stringify(entry.kind)} 无法识别。允许：straight | turn | left | right | sidestep | hover | stand。`,
     );
   }
   const allowed = ['turn_deg', 'deg', 'angle_deg', 'radius_m', 'radius'];
@@ -249,11 +319,12 @@ function validateSegments(raw, warnings) {
     throw new Error(`segments 最多 ${SEGMENT_LIMITS.maxSegments} 段，收到 ${list.length} 段。`);
   }
   const normalized = list.map((entry, index) => normalizeSegment(entry, index));
-  const total = normalized.reduce(
-    (sum, entry) => sum + (entry.kind === 'straight' ? entry.length_m
-      : Math.abs((entry.turn_deg * Math.PI) / 180) * entry.radius_m),
-    0,
-  );
+  for (const entry of normalized) if (entry.kind === 'sidestep') warnings.push(`没有横移步态；${entry.side === 'right' ? '右' : '左'}侧移明确替代为${entry.side === 'right' ? '右' : '左'}转 90°再直行，实际朝向会改变。`);
+  const total = normalized.reduce((sum, entry) => {
+    if (entry.kind === 'straight' || entry.kind === 'sidestep') return sum + entry.length_m;
+    if (entry.kind === 'turn') return sum + Math.abs((entry.turn_deg * Math.PI) / 180) * entry.radius_m;
+    return sum;
+  }, 0);
   if (total > 1.8) {
     warnings.push(`复合轨迹总长 ${total.toFixed(2)} m 偏长，渲染时间会变长（建议 ≤1.6 m）。`);
   }
@@ -309,7 +380,7 @@ export function validateInput(raw) {
   const unknown = Object.keys(raw).filter((key) => !(key in PARAM_SPEC));
   if (unknown.length > 0) {
     throw new Error(
-      `无法识别的参数：${unknown.join(', ')}。允许的参数只有 ${PARAM_ORDER.join(', ')}。` +
+      `无法识别的参数：${unknown.join(', ')}。允许的参数只有 ${Object.keys(PARAM_SPEC).join(', ')}。` +
       '（其余字段保持默认或沿用上一次任务的取值。）',
     );
   }
@@ -403,16 +474,13 @@ export function inheritParams(raw, lastParams) {
   if (!lastParams || typeof lastParams !== 'object') return { merged: input, inherited: [] };
   const merged = { ...input };
   const inherited = [];
-  for (const key of PARAM_ORDER) {
+  const nextPattern = normalizeEnum('pattern', merged.pattern ?? lastParams.pattern ?? 'line');
+  const fields = fieldsForPattern(typeof nextPattern === 'string' ? nextPattern : 'line');
+  for (const key of fields) {
     if (merged[key] !== undefined && merged[key] !== null && merged[key] !== '') continue;
     if (lastParams[key] === undefined || lastParams[key] === null) continue;
     merged[key] = lastParams[key];
     inherited.push(key);
-  }
-  // Composite segment lists are not scalars, so inherit them separately.
-  if ((merged.segments === undefined || merged.segments === null) && Array.isArray(lastParams.segments)) {
-    merged.segments = lastParams.segments;
-    inherited.push('segments');
   }
   return { merged, inherited };
 }
@@ -421,6 +489,12 @@ export function inheritParams(raw, lastParams) {
 /** One-line Chinese description of one composite segment. */
 function segmentLabel(entry) {
   if (entry.kind === 'straight') return `直行 ${fmt(entry.length_m)} m`;
+  if (entry.kind === 'sidestep') return `${entry.side === 'right' ? '右侧移' : '左侧移'} ${fmt(entry.length_m)} m`;
+  if (entry.kind === 'hover') {
+    const foot = entry.hover_foot === 'left' ? '左脚' : '右脚';
+    return `悬停抬${foot} ${fmt(entry.hold_s)} s`;
+  }
+  if (entry.kind === 'stand') return `站立 ${fmt(entry.hold_s)} s`;
   const side = entry.turn_deg >= 0 ? '左转' : '右转';
   return `${side} ${Math.abs(entry.turn_deg).toFixed(0)}° (R${fmt(entry.radius_m)})`;
 }
@@ -495,16 +569,15 @@ export function buildTemplates(options = {}) {
       label_en: 'Segmented walk (forward / left / right …)',
       label_zh: '分段组合轨迹',
       description:
-        'Walks a sequence of straight runs and left/right turns inside one clip, e.g. forward → left 90° → right 90°. ' +
-        'Use `segments`; omitting it defaults to exactly that shape.',
+        'Walks a timeline of locomotion and pose segments in one clip: straight, turn, sidestep (degrades to turn+straight), hover, stand.',
       description_zh:
-        '在一个 clip 里按顺序执行多段：直行 + 左转/右转（如「往前走，然后向左转弯，再向右转」）。用 segments 描述；不传时默认就是「直行 0.35 m → 左转 90° → 右转 90°」。',
+        '在一个 clip 里按时间轴执行多段：直行、转弯、侧移（无横移时降级为转弯再直行）、单脚悬停、站立保持。',
       uses: ['direction', 'step_length_m', 'segments', 'speed'],
       not_used: ['radius_m', 'laps'],
       examples_zh: [
         '鸭子往前走，然后向左转弯，再向右转',
+        '向左走，然后再单脚站立',
         '先直走半米，再左转 120 度',
-        '走到前面左拐再右拐，步子小一点',
       ],
     },
     {
@@ -543,13 +616,29 @@ export function buildTemplates(options = {}) {
     description_en: PARAM_SPEC.segments.en,
     hint_zh: PARAM_SPEC.segments.help,
     item_schema: {
-      kind: 'straight | turn | left | right（left/right 自动定符号）',
+      kind: 'straight | turn | left | right | sidestep | hover | stand',
       'straight.length_m': `${SEGMENT_LIMITS.straight.min}–${SEGMENT_LIMITS.straight.max} m`,
       'turn.turn_deg': `±${SEGMENT_LIMITS.turnDeg.min}–${SEGMENT_LIMITS.turnDeg.max}°（正=左转，负=右转）`,
       'turn.radius_m': `${SEGMENT_LIMITS.turnRadius.min}–${SEGMENT_LIMITS.turnRadius.max} m`,
+      'sidestep.side': 'left | right（无横移步态时降级为转弯 90° 再直行）',
+      'hover.hover_foot': 'left | right',
+      'stand.hold_s': `${SEGMENT_LIMITS.hold.min}–${SEGMENT_LIMITS.hold.max} s`,
       max_segments: SEGMENT_LIMITS.maxSegments,
     },
   };
+  for (const key of ['hover_foot', 'lift_height_m', 'hold_s']) {
+    const spec = PARAM_SPEC[key];
+    parameter_schema[key] = {
+      type: spec.type,
+      required: false,
+      default: spec.default,
+      only_for_pattern: 'hover',
+      description_zh: spec.zh,
+      description_en: spec.en,
+      hint_zh: spec.help,
+      ...(spec.type === 'number' ? { minimum: spec.min, maximum: spec.max, unit: spec.unit ?? null } : { values: spec.values }),
+    };
+  }
 
   const synonyms = {};
   for (const [key, table] of Object.entries(SYNONYMS)) {

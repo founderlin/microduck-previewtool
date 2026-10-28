@@ -4,6 +4,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { doctor } from './config.mjs';
+import { createWorkbench, workbenchAsset } from '../../dsh-microduck-preview/lib/workbench.js';
+import { serveVideo } from '../../dsh-microduck-preview/lib/http.js';
 
 const PREFIX = '/api/microduck';
 const MIME = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css; charset=utf-8'] };
@@ -89,13 +91,6 @@ export async function startServer(config) {
   const getSessionTasks = (id) => store.listForSession(id, 200);
   const templates = (id) => ({
     ...spec.buildTemplates({ recentTasks: getSessionTasks(id).slice(0, 5).map((r) => store.publicView(r)) }),
-    parameter_schema: {
-      ...spec.buildTemplates().parameter_schema,
-      ...Object.fromEntries(Object.entries(spec.PARAM_SPEC).filter(([key]) => ['hover_foot', 'lift_height_m', 'hold_s'].includes(key)).map(([key, value]) => [key, {
-        type: value.type, default: value.default, description_zh: value.zh, hint_zh: value.help,
-        ...(value.type === 'number' ? { minimum: value.min, maximum: value.max, unit: value.unit } : { values: value.values }),
-      }])),
-    },
     runtime: 'codex-local',
     tuning_rule: '微调仅继承当前 session_id 最近一个未失败任务的参数；也可用 base_task_id 指定基准。',
     output_contract: { status_values: ['queued', 'running', 'done', 'error'], on_done: '使用 viewer_url 打开 Codex 右侧浏览器面板；video_path 是本机 MP4。', on_running: '使用 status 查询同一 task_id，不要重复提交。', on_error: '如实转述 error、DEMO 和降级原因。' },
@@ -124,6 +119,7 @@ export async function startServer(config) {
     return record;
   };
 
+  const workbench = createWorkbench({ config, store, send, serveVideo, owns, preview: false });
   server = http.createServer(async (req, res) => {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'no-referrer');
@@ -167,6 +163,7 @@ export async function startServer(config) {
           if (input.wait_ms) await store.waitFor(task, input.wait_ms);
           return send(res, 200, view(task));
         }
+        if (await workbench(req, res, url)) return;
         const owner = session(url.searchParams.get('session_id'));
         if (route === '/presets' && method === 'GET') return send(res, 200, templates(owner));
         if (route === '/tasks' && method === 'GET') return send(res, 200, { tasks: getSessionTasks(owner).map(view), session_id: owner });
@@ -195,7 +192,7 @@ export async function startServer(config) {
       }
       const asset = MIME[pathname];
       if (asset && (method === 'GET' || method === 'HEAD')) {
-        const content = fs.readFileSync(path.join(config.skillRoot, 'assets', asset[0]));
+        const content = workbenchAsset(config, asset[0]);
         res.writeHead(200, { 'content-type': asset[1], 'content-length': content.length, 'cache-control': 'no-store' });
         res.end(method === 'HEAD' ? undefined : content);
         return;

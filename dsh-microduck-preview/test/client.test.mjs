@@ -164,10 +164,10 @@ for (const [label, component, props] of renders) {
 {
   const tree = render(byKey['conversation.view:microduck-preview'], { sessionId: 'session-x', viewRequest: null, completeViewRequest: () => {} });
   const markup = JSON.stringify(tree);
-  assert.ok(markup.includes('mduck-atabs'), 'action-card tab strip must render');
-  assert.ok(markup.includes('mduck-atab-empty'), 'empty tab strip shows a hint while loading');
+  assert.ok(markup.includes('/api/microduck/workbench/'), 'loads the shared workbench');
+  assert.ok(markup.includes('session_id=session-x'), 'workbench is scoped to its owning session');
   assert.ok(!markup.includes('mduck-side'), 'the old right-hand task list column is gone');
-  assert.ok(markup.includes('role'), 'tabs are exposed with ARIA roles');
+  assert.ok(markup.includes('Microduck 动作工作台'), 'embedded workbench has an accessible title');
 }
 
 console.log('client smoke checks passed');

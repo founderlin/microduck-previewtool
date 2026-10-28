@@ -873,120 +873,15 @@ window.__ModuleLoader__.load({
      * View tab in this Session's header next to Chat / Trajectory. It shows the
      * live MuJoCo scene for previews requested from *this* session.
      */
+    // Identical workbench assets are served by both hosts, preserving DSH auth.
     function SessionView(props) {
-      const sessionId = props.sessionId ?? props.session?.id ?? null;
-      const viewRequest = props.viewRequest ?? null;
-      const [allSessions, setAllSessions] = useState(false);
-      const [state, refresh] = useTasks({ sessionId, allSessions });
-      const tasks = state.data?.tasks ?? [];
-      const [selectedId, setSelectedId] = useState(() => readStorage(LS_SELECTED, ''));
-      const pinnedByUser = useRef(false);
-      const selected = useMemo(
-        () => tasks.find((task) => task.id === selectedId) ?? tasks[0] ?? null,
-        [tasks, selectedId],
-      );
-
-      // Follow the newest task unless the user picked an older one in this view.
-      const newest = tasks[0] ?? null;
-      useEffect(() => {
-        if (!pinnedByUser.current && newest?.id && newest.id !== selectedId) {
-          setSelectedId(newest.id);
-        }
-      }, [newest?.id, selectedId]);
-
-      useEffect(() => {
-        if (selected?.id) writeStorage(LS_SELECTED, selected.id);
-      }, [selected?.id]);
-
-      // Another surface asked this View to focus a task: honour the one-shot
-      // request, then acknowledge it so the owner can retire it.
-      useEffect(() => {
-        if (!viewRequest) return;
-        try {
-          const focus = viewRequest.focus ?? viewRequest.taskId ?? viewRequest.id ?? null;
-          if (typeof focus === 'string') {
-            const match = tasks.find((task) => task.id === focus || task.call_id === focus);
-            if (match) {
-              pinnedByUser.current = true;
-              setSelectedId(match.id);
-            }
-          }
-        } catch {
-          /* a malformed request must not break the View */
-        }
-        props.completeViewRequest?.();
-      }, [viewRequest]);
-
-      const pipeline = state.data;
-      const pipelineLabel = pipeline
-        ? (pipeline.pipeline_ready ? 'real pipeline ready' : `demo mode — ${pipeline.engine_reason ?? 'pipeline not ready'}`)
-        : '…';
-
-      // One tab per action card; scrolls horizontally and keeps the active one in view.
-      const tabsRef = useRef(null);
-      useEffect(() => {
-        const strip = tabsRef.current;
-        if (!strip) return;
-        const active = strip.querySelector('[data-active="1"]');
-        if (active && typeof active.scrollIntoView === 'function') {
-          active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-        }
-      }, [selected?.id, tasks.length]);
-
-      const actionTabs = h('div', { className: 'mduck-atabs', ref: tabsRef, role: 'tablist' },
-        tasks.length === 0
-          ? h('div', { className: 'mduck-atab-empty' },
-            state.loading ? 'Loading…' : (allSessions ? 'No action yet' : 'No action in this session yet'))
-          : tasks.map((task) => h('button', {
-            key: task.id,
-            type: 'button',
-            role: 'tab',
-            'data-active': selected?.id === task.id ? '1' : '0',
-            'aria-selected': selected?.id === task.id,
-            className: `mduck-atab${selected?.id === task.id ? ' mduck-atab-on' : ''}`,
-            title: `${actionLabel(task.params)}\n${paramLine(task.params)}\n${task.id} · ${task.status} · ${timeLabel(task.created_at)}`,
-            onClick: () => { pinnedByUser.current = true; setSelectedId(task.id); },
-          },
-          h('span', { className: 'mduck-dot', style: { background: STATUS_COLOR[task.status] ?? STATUS_COLOR.queued } }),
-          h('span', { className: 'mduck-atab-label' }, actionLabel(task.params)),
-          task.engine === 'demo' ? h('span', { className: 'mduck-atab-tag mduck-chip-warn' }, 'DEMO') : null,
-          (task.status === 'running' || task.status === 'queued')
-            ? h('span', { className: 'mduck-atab-tag' }, `${elapsedSeconds(task)}s`) : null)));
-
-      const emptyState = h('div', { className: 'mduck-placeholder' },
-        h(DuckMark, { size: 26 }),
-        h('div', { style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, TEXT.empty),
-        h('div', { className: 'mduck-samples' },
-          TEXT.emptySamples.map((sample, index) => h('span', { key: index, className: 'mduck-sample' }, sample))),
-        h('div', { style: { fontSize: 11 } }, TEXT.emptyHint));
-
-      const errorCard = state.error
-        ? h('div', { className: 'mduck-card', style: { padding: 14 } },
-          h('div', { style: { fontWeight: 600 } }, TEXT.notConnected),
-          h('div', { className: 'mduck-err', style: { fontSize: 12, marginTop: 4 } }, state.error))
-        : null;
-
-      return h('div', { className: 'mduck-root' },
-        h(Styles),
-        h('div', { className: 'mduck-head' },
-          h(DuckMark, { size: 20 }),
-          h('div', null,
-            h('div', { className: 'mduck-head-title' }, TEXT.title),
-            h('div', { className: 'mduck-sub' }, `${TEXT.subtitle} · ${pipelineLabel}`)),
-          h('span', { className: 'mduck-spacer' }),
-          h('label', { className: 'mduck-toggle', title: 'Include previews requested from other sessions' },
-            h('input', {
-              type: 'checkbox',
-              checked: allSessions,
-              onChange: (event) => setAllSessions(event.target.checked),
-            }), TEXT.allSessions),
-          h('button', { className: 'mduck-btn', type: 'button', onClick: () => refresh() }, TEXT.refresh)),
-        actionTabs,
-        h('div', { className: 'mduck-body' },
-          h('div', { className: 'mduck-main' },
-            errorCard,
-            selected ? h(Stage, { task: selected }) : emptyState,
-            selected ? h(ParamsPanel, { task: selected }) : null)));
+      const owner = props.sessionId ?? props.session?.id;
+      const request = props.viewRequest;
+      let taskId = request?.task_id;
+      if (!owner) return h('div', { className: 'mduck-workbench', style: { color: 'var(--dsw-alias-label-primary)' } }, h(Styles), h('p', null, '请先打开一个对话。'));
+      const params = new URLSearchParams({ session_id: String(owner) });
+      if (taskId) params.set('task_id', taskId);
+      return h('div', { className: 'mduck-workbench', style: { height: '100%', color: 'var(--dsw-alias-label-primary)' } }, h(Styles), h('iframe', { title: 'Microduck 动作工作台', src: `/api/microduck/workbench/?${params}`, style: { border: 0, width: '100%', height: '100%', minHeight: 800 }, allow: 'fullscreen' }));
     }
 
     // ------------------------------------------------------------ tool card --

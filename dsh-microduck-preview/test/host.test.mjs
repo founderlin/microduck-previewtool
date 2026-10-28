@@ -48,11 +48,20 @@ await test('a one-field tweak inherits the previous task params', () => {
   assert.equal(params.radius_m, 0.12);
   assert.equal(params.step_length_m, 0.03);
 
-  // Explicit values win over the previous task.
+  // Explicit values win over the previous task. Unrelated fields are not inherited.
   const explicit = inheritParams({ pattern: 'line', direction: 'forward' }, previous);
   assert.equal(explicit.merged.pattern, 'line');
   assert.equal(explicit.merged.direction, 'forward');
-  assert.equal(explicit.merged.radius_m, 0.09);
+  assert.equal(explicit.merged.radius_m, undefined);
+
+  const hoverAfterComposite = inheritParams(
+    { pattern: 'hover' },
+    { pattern: 'composite', direction: 'forward', step_length_m: 0.04, speed: 'normal',
+      segments: [{ kind: 'straight', length_m: 0.35 }] },
+  );
+  assert.equal(hoverAfterComposite.merged.pattern, 'hover');
+  assert.equal(hoverAfterComposite.merged.segments, undefined);
+  assert.equal(hoverAfterComposite.merged.speed, 'normal');
 
   // No previous task -> plain defaults, no inheritance.
   const first = inheritParams({ direction: 'backward' }, null);
@@ -96,6 +105,14 @@ await test('composite segments validate, default to forward/left/right, and summ
   assert.match(summarizeParams(explicit.params), /左转 120°/);
 
   assert.throws(() => validateInput({ pattern: 'composite', segments: [{ kind: 'turn', turn_deg: 90, radius_m: 0.03 }] }), /radius_m=0\.03/);
+  const timeline = validateInput({ pattern: 'composite', segments: [
+    { kind: 'turn', turn_deg: 90, radius_m: 0.12 },
+    { kind: 'straight', length_m: 0.45 },
+    { kind: 'hover', hover_foot: 'right', lift_height_m: 0.04, hold_s: 2.5 },
+  ] });
+  assert.equal(timeline.params.segments[2].kind, 'hover');
+  assert.match(summarizeParams(timeline.params), /悬停抬右脚/);
+
   assert.throws(() => validateInput({ pattern: 'composite', segments: [{ kind: 'jump' }] }), /无法识别/);
   assert.throws(() => validateInput({ pattern: 'composite', segments: new Array(7).fill({ kind: 'straight', length_m: 0.1 }) }), /最多 6 段/);
 
