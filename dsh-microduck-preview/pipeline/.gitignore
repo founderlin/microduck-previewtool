@@ -1,0 +1,6 @@
+# local iteration scratch (probes, frame drafts, temp renders)
+.work/
+__pycache__/
+*.pyc
+# frame-server runtime JPEGs (host unlinks them)
+samples/*/.frames/

@@ -1,0 +1,93 @@
+{
+  "ready": true,
+  "verified_at": "2026-10-27T23:51:34+08:00",
+  "cases": [
+    "line/forward",
+    "line/backward",
+    "figure8/backward"
+  ],
+  "mean_seconds": 15.19,
+  "verified_by": "pipeline-walk (author_walk.py + run_preview.py, real MuJoCo render)",
+  "engine": "real",
+  "evidence": {
+    "figure8/backward": {
+      "sample": "pipeline/samples/figure8_backward_small/preview.mp4",
+      "metrics": "pipeline/samples/figure8_backward_small/metrics.json",
+      "params": {
+        "pattern": "figure8",
+        "direction": "backward",
+        "step_length_m": 0.025,
+        "radius_m": 0.1,
+        "laps": 1.0,
+        "speed": "normal"
+      },
+      "effective_pattern": "figure8",
+      "degraded": false,
+      "geometry_ok": true,
+      "checks": {
+        "min_joint_margin_deg": 14.331,
+        "max_joint_speed_rad_s": 10.335,
+        "min_sole_z_mm": 0.411,
+        "min_nonfoot_z_mm": 19.597,
+        "self_penetrating_contacts": 0
+      },
+      "frames": 371,
+      "duration_s": 14.84,
+      "resolution": "1120x640",
+      "seconds": 20.54
+    },
+    "line/backward": {
+      "sample": "pipeline/samples/line_backward_normal/preview.mp4",
+      "metrics": "pipeline/samples/line_backward_normal/metrics.json",
+      "params": {
+        "pattern": "line",
+        "direction": "backward",
+        "step_length_m": 0.04,
+        "radius_m": 0.1,
+        "laps": 1.5,
+        "speed": "normal"
+      },
+      "effective_pattern": "line",
+      "degraded": false,
+      "geometry_ok": true,
+      "checks": {
+        "min_joint_margin_deg": 15.194,
+        "max_joint_speed_rad_s": 10.042,
+        "min_sole_z_mm": 0.411,
+        "min_nonfoot_z_mm": 19.677,
+        "self_penetrating_contacts": 0
+      },
+      "frames": 210,
+      "duration_s": 8.4,
+      "resolution": "1120x640",
+      "seconds": 12.25
+    },
+    "line/forward": {
+      "sample": "pipeline/samples/line_forward_normal/preview.mp4",
+      "metrics": "pipeline/samples/line_forward_normal/metrics.json",
+      "params": {
+        "pattern": "line",
+        "direction": "forward",
+        "step_length_m": 0.04,
+        "radius_m": 0.1,
+        "laps": 1.5,
+        "speed": "normal"
+      },
+      "effective_pattern": "line",
+      "degraded": false,
+      "geometry_ok": true,
+      "checks": {
+        "min_joint_margin_deg": 15.202,
+        "max_joint_speed_rad_s": 10.056,
+        "min_sole_z_mm": 0.413,
+        "min_nonfoot_z_mm": 19.677,
+        "self_penetrating_contacts": 0
+      },
+      "frames": 210,
+      "duration_s": 8.4,
+      "resolution": "1120x640",
+      "seconds": 12.77
+    }
+  },
+  "notes": "All three cases ran end-to-end with exit code 0 and produced h264/yuv420p/1120x640/25fps/+faststart preview.mp4 plus metrics.json; geometry.ok=true with degraded=false in every case (figure8 is the two-tangent-circle construction, not a degradation). Host uses this file only to switch from demo mode to the real pipeline."
+}

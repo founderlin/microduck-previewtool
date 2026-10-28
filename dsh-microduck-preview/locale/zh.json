@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Microduck 运动预览",
+    "description": "用一句话让 Microduck 双足机器人按描述走起来，1–3 分钟后在 Web 面板里播放 MuJoCo 渲染预览视频，并保留任务历史与参数。"
+  }
+}

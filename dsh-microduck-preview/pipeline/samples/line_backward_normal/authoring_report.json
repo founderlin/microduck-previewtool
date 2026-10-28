@@ -1,0 +1,59 @@
+{
+  "params": {
+    "pattern": "line",
+    "direction": "backward",
+    "step_length_m": 0.04,
+    "radius_m": 0.1,
+    "laps": 1.5,
+    "speed": "normal"
+  },
+  "effective_params": {
+    "pattern": "line",
+    "direction": "backward",
+    "step_length_m": 0.04,
+    "radius_m": 0.1,
+    "laps": 1.5,
+    "speed": "normal"
+  },
+  "effective_pattern": "line",
+  "degraded": false,
+  "degrade_reason": null,
+  "warnings": [
+    "后退步态为前后对称的'倒走'：脚向身体后方摆、髋关节后摆，已通过几何检查"
+  ],
+  "geometry": {
+    "ok": true,
+    "hard_error_count": 0,
+    "checks": {
+      "min_joint_margin_deg": 15.194,
+      "max_joint_speed_rad_s": 10.042,
+      "min_sole_z_mm": 0.411,
+      "min_nonfoot_z_mm": 19.677,
+      "self_penetrating_contacts": 0
+    },
+    "reason_counts": {},
+    "worst_frames": [],
+    "ik": {
+      "max_ik_foot_error_mm": 0.025,
+      "median_ik_foot_error_mm": 0.017,
+      "tolerance_mm": 5.0
+    },
+    "model": "/Users/founderlin/Desktop/RL研发/microduck-marseille/src/mjlab_microduck/robot/microduck/robot_groundcontact.xml"
+  },
+  "timings_s": {
+    "ik_s": 4.38,
+    "authoring_total_s": 5.22,
+    "run_preview_authoring_s": 5.22
+  },
+  "plan": {
+    "n_steps": 21,
+    "step_m": 0.03928571428571429,
+    "step_frames": 18,
+    "total_frames": 420,
+    "duration_s": 7.5600000000000005,
+    "lap_length_m": 0.55,
+    "travel_m": 0.8250000000000002,
+    "laps_effective": 1.5000000000000002,
+    "trimmed": false
+  }
+}

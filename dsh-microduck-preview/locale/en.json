@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Microduck Preview",
+    "description": "Renders MuJoCo preview videos of Microduck gait motions from a chat sentence, with a live task history and video viewer."
+  }
+}

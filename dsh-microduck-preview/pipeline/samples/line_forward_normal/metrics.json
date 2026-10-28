@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "engine": "real",
+  "params": {
+    "pattern": "line",
+    "direction": "forward",
+    "step_length_m": 0.04,
+    "radius_m": 0.1,
+    "laps": 1.5,
+    "speed": "normal"
+  },
+  "effective_params": {
+    "pattern": "line",
+    "direction": "forward",
+    "step_length_m": 0.04,
+    "radius_m": 0.1,
+    "laps": 1.5,
+    "speed": "normal"
+  },
+  "frames": 210,
+  "fps": 25,
+  "duration_s": 8.4,
+  "motion_duration_s": 8.38,
+  "geometry": {
+    "ok": true,
+    "degraded": false,
+    "effective_pattern": "line",
+    "degrade_reason": null,
+    "hard_error_count": 0,
+    "checks": {
+      "min_joint_margin_deg": 15.202,
+      "max_joint_speed_rad_s": 10.056,
+      "min_sole_z_mm": 0.413,
+      "min_nonfoot_z_mm": 19.677,
+      "self_penetrating_contacts": 0
+    }
+  },
+  "warnings": [],
+  "created_at": "2026-10-27T23:48:51+08:00",
+  "render": {
+    "video": "preview.mp4",
+    "width": 1120,
+    "height": 640,
+    "stride": 2,
+    "bytes": 514214,
+    "codec": {
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "faststart": true
+    },
+    "probe": {
+      "stream": "Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 1120x640, 486 kb/s, 25 fps, 25 tbr, 12800 tbn (default)",
+      "duration": "Duration: 00:00:08.40, start: 0.000000, bitrate: 489 kb/s"
+    },
+    "render_seconds": 7.4
+  },
+  "pipeline": {
+    "authoring_seconds": 5.26,
+    "total_seconds": 12.77,
+    "motion_file": "motion.json"
+  },
+  "authoring": {
+    "step_length_m": 0.03928571428571429,
+    "step_length_requested_m": 0.04,
+    "step_duration_s": 0.36,
+    "swing_height_m": 0.01785714285714286,
+    "n_steps": 21,
+    "travel_m": 0.8250000000000002,
+    "laps_effective": 1.5000000000000002,
+    "trimmed_for_time_budget": false,
+    "max_ik_foot_error_mm": 0.02614976018898553
+  }
+}

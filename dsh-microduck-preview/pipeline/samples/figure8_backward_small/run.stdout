@@ -1,0 +1,3 @@
+[preview] authored 742 frames in 8.6s, degraded=False
+[preview] rendered 371 frames in 11.8s
+{"ok": true, "video": "/Users/founderlin/agent_zoo/dsh-microduck-preview/pipeline/samples/figure8_backward_small/preview.mp4", "frames": 371, "duration_s": 14.84, "degraded": false, "geometry_ok": true, "seconds": 20.54}

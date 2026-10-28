@@ -1,0 +1,14 @@
+{
+  "name": "codex-microduck-preview",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Conversation-driven Microduck motion preview and local MuJoCo viewer for Codex",
+  "engines": { "node": ">=22.19" },
+  "scripts": {
+    "start": "node scripts/microduck.mjs start",
+    "doctor": "node scripts/microduck.mjs doctor",
+    "test": "node --test test/*.test.mjs",
+    "install-skill": "node scripts/install.mjs"
+  }
+}

@@ -1,0 +1,25 @@
+# Bundle patch for @local/dsh-microduck-preview.
+#
+# One Host row registers the agent tools (`duck_templates`, `duck_preview`,
+# `duck_status`), the `/api/microduck/*` routes used by the Web viewer, and the
+# background task runner. The Browser half is declared separately in
+# package.json (`dsh.client`) and renders the viewer panel, its sidebar entry
+# and the inline tool card.
+#
+# Every field below is optional; the plugin falls back to the same defaults.
+- insert:
+    - id: microduck-preview
+      name: "@local/dsh-microduck-preview"
+      config:
+        # "auto" uses the real MuJoCo pipeline only when pipeline/ready.json
+        # exists and the interpreter is executable; otherwise it serves the
+        # bundled demo clip and labels itself DEMO. "real" / "demo" force one.
+        engine: auto
+        # External asset repo (read-only for this plugin).
+        assetsRoot: "/Users/founderlin/Desktop/RL研发/microduck-marseille"
+        # Interpreter with mujoco/imageio/PIL/scipy installed.
+        python: "/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python"
+        # Where task directories (preview.mp4 + metrics.json) are written.
+        dataDir: "~/.dsh/microduck-preview"
+        # How long duck_preview blocks before returning a still-running task.
+        waitMs: 90000

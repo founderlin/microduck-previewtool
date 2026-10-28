@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Microduck Preview</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="cube" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10v10M3 7l9 5 9-5M7.5 4.5l9 5v5"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="m8 4 13 8-13 8V4Z"/></symbol>
+    <symbol id="pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="reset" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 1 7M3 4v6h6"/></symbol>
+    <symbol id="expand" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 1v5m0 12v5M1 12h5m12 0h5"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  </defs></svg>
+  <main class="workspace">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"><svg><use href="#cube"/></svg></span><div><p>工作台 / 动作预览</p><h1>Microduck <span>Preview</span></h1></div></div>
+      <div class="connection"><span id="connection-dot" class="dot"></span><span id="connection-label">正在连接</span></div>
+    </header>
+
+    <section class="taskbar" aria-label="任务与模式">
+      <div class="task-choice"><svg class="icon"><use href="#clock"/></svg><label class="sr-only" for="task-select">任务历史</label><select id="task-select"><option value="">暂无任务</option></select></div>
+      <div class="badges"><span id="engine-badge" class="badge subtle">未生成</span><span id="geometry-badge" class="badge subtle" hidden></span></div>
+    </section>
+
+    <div id="error-banner" class="notice error" role="alert" hidden></div>
+    <div id="warning-banner" class="notice warning" role="status" hidden></div>
+    <details id="task-notes" class="task-notes" hidden><summary>任务说明 <span id="notes-count"></span></summary><ul id="notes-list"></ul></details>
+
+    <section class="viewer-shell" aria-label="Microduck 动作查看器">
+      <div class="viewer-tabs" role="tablist" aria-label="预览模式">
+        <button id="scene-tab" class="view-tab active" role="tab" aria-selected="true" aria-controls="viewport" type="button">实时场景</button>
+        <button id="video-tab" class="view-tab" role="tab" aria-selected="false" aria-controls="viewport" type="button" disabled>录制视频</button>
+        <span id="render-info" class="render-info">MuJoCo</span>
+      </div>
+      <div id="viewport" class="viewport" role="tabpanel" aria-labelledby="scene-tab" tabindex="0" aria-label="拖拽旋转视角，滚轮缩放；空格播放或暂停">
+        <img id="scene-image" class="scene-image" alt="当前动作在 MuJoCo 中的真实渲染帧" draggable="false" hidden>
+        <video id="recorded-video" controls playsinline preload="metadata" aria-label="已渲染的动作视频" hidden></video>
+        <div id="empty-state" class="empty-state"><span class="empty-mark"><svg><use href="#cube"/></svg></span><h2 id="empty-title">从一个动作开始</h2><p id="empty-description">在 Codex 对话里描述动作，或在下方设置参数。<br>生成后可旋转视角、播放和导出视频。</p><div class="suggestion">试试「倒退走 8 字，步子小一点」</div></div>
+        <div id="frame-loading" class="frame-loading" hidden><span class="spinner"></span><span>正在准备实时场景</span></div>
+        <div id="camera-hint" class="camera-hint" hidden>拖拽旋转 · 滚轮缩放</div>
+        <div id="viewer-hud" class="viewer-hud" hidden><span class="live-dot"></span><span>真实模型 · 720 × 480</span></div>
+      </div>
+      <div class="playback" id="scene-controls">
+        <button id="play-button" class="icon-button play-button" type="button" aria-label="播放" disabled><svg><use id="play-icon" href="#play"/></svg></button>
+        <output id="time-label" class="time-label">00.0 <span>/ 00.0 s</span></output>
+        <label class="sr-only" for="timeline">播放时间</label><input id="timeline" type="range" min="0" max="1" step="0.01" value="0" disabled>
+        <label class="sr-only" for="playback-speed">播放速度</label><select id="playback-speed" class="speed-select" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+        <button id="reset-camera" class="icon-button" type="button" aria-label="重置视角" title="重置视角" disabled><svg><use href="#reset"/></svg></button>
+        <button id="follow-camera" class="icon-button pressed" type="button" aria-label="跟随机器人" aria-pressed="true" title="跟随机器人" disabled><svg><use href="#target"/></svg></button>
+        <button id="fullscreen-button" class="icon-button" type="button" aria-label="全屏预览" title="全屏预览"><svg><use href="#expand"/></svg></button>
+      </div>
+    </section>
+
+    <form id="parameter-form" class="parameters">
+      <div class="section-heading"><h2>动作参数</h2><span id="edit-status" class="edit-status">生成新的动作预览</span></div>
+      <div class="parameter-grid">
+        <label class="field"><span>轨迹</span><select name="pattern" id="pattern"><option value="line">直线</option><option value="arc">绕圈 / 弧线</option><option value="figure8">∞ 8 字</option><option value="composite">多段组合</option><option value="hover">单脚悬停</option></select></label>
+        <label class="field" id="direction-field"><span>方向</span><select name="direction"><option value="forward">前进</option><option value="backward">倒退</option></select></label>
+        <label class="field" id="speed-field"><span>节奏</span><select name="speed"><option value="slow">慢速</option><option value="normal" selected>正常</option><option value="fast">快速</option></select></label>
+        <label class="field" id="step-field"><span>步长 <small>0.02–0.06 m</small></span><span class="number-field"><input name="step_length_m" type="number" min="0.02" max="0.06" step="0.001" value="0.04" required><span>m</span></span></label>
+        <label class="field" id="radius-field"><span>半径 <small>0.05–0.15 m</small></span><span class="number-field"><input name="radius_m" type="number" min="0.05" max="0.15" step="0.005" value="0.09" required><span>m</span></span></label>
+        <label class="field" id="laps-field"><span>圈数 / 趟数</span><input name="laps" type="number" min="0.5" max="3" step="0.5" value="1" required></label>
+      </div>
+      <div id="hover-fields" class="parameter-grid extra-fields" hidden>
+        <label class="field"><span>抬起的脚</span><select name="hover_foot"><option value="right">右脚</option><option value="left">左脚</option></select></label>
+        <label class="field"><span>抬脚高度 <small>0.02–0.08 m</small></span><span class="number-field"><input name="lift_height_m" type="number" min="0.02" max="0.08" step="0.005" value="0.04"><span>m</span></span></label>
+        <label class="field"><span>保持时长 <small>0.5–5 s</small></span><span class="number-field"><input name="hold_s" type="number" min="0.5" max="5" step="0.5" value="2.5"><span>s</span></span></label>
+      </div>
+      <div id="composite-fields" class="extra-fields" hidden><label class="field"><span>分段轨迹 <small>最多 6 段 · JSON</small></span><textarea name="segments" id="segments" rows="5" spellcheck="false">[{"kind":"straight","length_m":0.35},{"kind":"turn","turn_deg":90,"radius_m":0.12},{"kind":"turn","turn_deg":-90,"radius_m":0.12}]</textarea></label><p class="field-help">straight：length_m 0.05–1.5 m；turn：turn_deg 正值左转、负值右转（绝对值 0.1–180°），radius_m 0.06–0.30 m。</p></div>
+      <div class="actions"><button id="generate-button" class="primary-button" type="submit"><svg class="icon"><use href="#play"/></svg><span id="generate-label">生成新预览</span></button><a id="download-button" class="secondary-button disabled" aria-disabled="true"><svg class="icon"><use href="#download"/></svg>导出 MP4</a></div>
+    </form>
+
+    <footer><span id="session-label">当前对话</span><span>运动学预览 · 不代表动力学平衡验证</span></footer>
+  </main>
+</body>
+</html>
