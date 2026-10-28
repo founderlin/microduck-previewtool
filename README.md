@@ -21,7 +21,9 @@ microduck-previewtool/
 
 在 Codex 里用自然语言生成和微调动作，并在右侧内置浏览器中旋转视角、播放、拖动时间轴、编辑参数、导出 MP4。
 
-原有 DSH 插件安装保持原样。本项目使用相邻 DSH 副本中的核心模块和 Python 管线；Codex 运行不需要 DSH 登录或 DSH 服务。
+`codex-microduck-preview` 按 Codex skill 编写，同样适用于 Cursor，以及其他具备技能目录、本地命令和浏览器预览的相近应用。Cursor 把该目录链接到 `~/.cursor/skills/` 即可。`scripts/install.mjs` 只写入 Codex 的技能目录（默认 `~/.codex/skills`）。其他应用把它放到自己的技能目录后，继续使用同一套 CLI 和本地 viewer；宿主没有内置浏览器时，打开 `viewer` 返回的本地地址。
+
+原有 DSH 插件安装保持原样。本项目使用相邻 DSH 副本中的核心模块和 Python 管线；Codex、Cursor 或其他宿主运行这个 skill 时，都不需要 DSH 登录或 DSH 服务。
 
 ### 安装和启动
 
@@ -79,7 +81,9 @@ node scripts/install.mjs --uninstall
 
 Generate and tune motions in Codex with natural language, then orbit the camera, play, scrub the timeline, edit parameters, and export an MP4 in the built-in browser on the right.
 
-The existing DSH plugin installation is left unchanged. This project uses the core modules and Python pipeline from the adjacent DSH copy. The Codex path does not require a DSH login or a running DSH service.
+`codex-microduck-preview` is written as a Codex skill and also works in Cursor and in other apps with a similar stack: a skills directory, local command execution, and a browser preview. For Cursor, link this directory into `~/.cursor/skills/`. `scripts/install.mjs` only installs into the Codex skills directory (by default `~/.codex/skills`). Other apps can place the same directory in their own skills folder and keep using the CLI and local viewer. If the host has no built-in browser, open the local URL returned by `viewer`.
+
+The existing DSH plugin installation is left unchanged. This project uses the core modules and Python pipeline from the adjacent DSH copy. Running this skill from Codex, Cursor, or another host does not require a DSH login or a running DSH service.
 
 ### Install and start
 
