@@ -1,233 +1,213 @@
-# @local/dsh-microduck-preview
+# Microduck 动作工作台 · DSH 插件
 
-Microduck 双足机器人**步态运动预览**的 DSH 插件：在 DSH Web 里说一句中文（例如「倒退走8字，步子小一点」），模型调用插件工具，后台用 Microduck 自带的 MuJoCo 管线生成动作（实测约 20–30 s），然后在 Web 面板的**交互式 MuJoCo 场景 viewer** 里实时播放/拖动视角与时间轴（同时产出 mp4 供下载、对话卡片与右侧 Sidebar 预览）。
+在 DSH 对话里描述动作，再打开同一对话的 **Microduck** 视图查看结果。可以继续说“步子小一点”“先左转，再抬右脚站一会儿”，动作与参数通过对话修改。
 
-> 任务书：`/Users/founderlin/Desktop/RL研发/microduck-preview/docs/plan-v0.md`（plan-v0）。
-> 本仓库是该任务书的实现。只做**预览**，不做球类交互、不做训练/PPO、无云端/账号/数据库。
+DSH 插件和 [Codex / Cursor skill](../README.md) 共用动作管线、参数校验、奖励目录和工作台界面。插件本身不启动 PPO，也不需要外部动作模仿 skill。
 
----
+## 先完成一次预览
 
-## 1. 已验证的运行环境（升级需回归）
+插件安装并启用后，在 DSH 对话中输入 `/duck_go 让 Microduck 倒退走 8 字，步子小一点`。如果宿主拦截未知斜杠命令，需使用该宿主支持的 skill 或普通文本入口；插件本身不能为宿主注册斜杠命令。
 
-| 项 | 值 |
-|---|---|
-| DSH | **0.2.1-rc.3**（DeepSeek Harness.app / desktop profile，`dsh-desktop-runtime`） |
-| 插件协议 | Host：named exports `apply` / `inject` / `name`；Client：`window.__ModuleLoader__.load({ id, factory })`，`dsh.client.platform: web`，`dsh.client.inject: []` |
-| Node | v26.5.0（要求 ≥ 22.19） |
-| Python | `/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python`（mujoco 3.10.0 / numpy 2.4.1 / scipy 1.18.0 / imageio 2.37.2 / Pillow 12.2.0） |
-| 外部资产 | `/Users/founderlin/agent_zoo/microduck_rl-develop`（只读调用，不复制、不修改） |
+打开同一对话的 **Microduck** 视图，拖拽旋转、滚轮缩放，用“执行动作”“中止”和“复位”控制场地；需要视频时点击“导出视频”。右侧调整奖励与惩罚权重，支持的项目可点击“看演示”。新动作生成成功后替换当前动作，失败时保留当前动作。旧版本生成的历史文件不会自动删除。
 
-DSH 处于 developer preview：**本插件只针对 0.2.1-rc.3 验证过**。升级 DSH 后按第 8 节回归清单复测。
+## 按需使用进阶功能
 
----
+### 串联动作
 
-## 2. 注册面（Host + Browser）
+当前支持五种动作模式：直线 `line`、弧线 `arc`、8 字 `figure8`、多段组合 `composite` 和单脚悬停 `hover`。
 
-### Host half（`index.js` + `lib/`）
+多段组合最多六段，通过对话或工具编排直行、转弯、悬停和站立；段间生成运动学过渡。
 
-| 注册点 | 内容 |
-|---|---|
-| `ctx.tools.register` | `duck_templates`、`duck_preview`、`duck_status`，以及工作台工具 `duck_doctor`、`duck_rewards`、`duck_explain`、`duck_pack`、`duck_verify` |
-| `ctx.webServer.register` | `prefix` 路由 `/api/microduck`（`lib/http.js`），自带 Range 流式 mp4 |
-| 任务运行器 | `lib/tasks.js`：单槽队列、子进程调用管线、任务目录持久化、重启恢复 |
-
-`/api/microduck/*` 比 Connection 的 `/api` 前缀更长，会命中本插件路由，因此**路由内部自己重放** `ctx.connection.requestRejection({headers})`（DSH 的 Host/Origin + 签名 cookie 校验）——未认证请求返回 401，不会绕过 DSH 的浏览器认证栅栏。
-
-| 路由 | 说明 |
-|---|---|
-| `GET /api/microduck/tasks` | 任务列表 + 引擎状态（`engine` / `pipeline_ready` / `engine_reason`） |
-| `GET /api/microduck/tasks/<id>` | 任务详情（含 raw metrics，失败时附 `run.log` 尾部） |
-| `GET|HEAD /api/microduck/tasks/<id>/video` | mp4 流，支持 `Range`（206 + `Content-Range`、`bytes=-N` 后缀范围、416） |
-| `GET /api/microduck/tasks/<id>/metrics` | 原始 `metrics.json` |
-| `GET /api/microduck/presets` | 模板 + 参数 schema（与 `duck_templates` 同源） |
-| `GET /api/microduck/health` | 引擎/管线就绪状态 |
-
-### Browser half（`client.js`）
-
-| Slot | key/id | 作用 |
-|---|---|---|
-| `conversation.view` | `microduck-preview`（order 20） | **会话视图（本插件的主界面）**：在 Session header 的 View tab 里，位于 Chat / Trajectory 之后；顶部是**动作卡片 Tab 条**（每个预览动作一个 tab），下方是选中动作的交互式 MuJoCo 场景 + 参数卡 + 指标/几何检查 |
-| `tool.call.toolview` | `duck_preview` | 对话流内嵌视频卡片（按 `callId` 关联任务，运行中自动刷新） |
-| `sidebar.right.tab.document` | `microduck-video` | 右侧 Sidebar 文档预览的 **mp4 渲染器**（`ctx.documentPreviews.register`，`loading: 'renderer'`，通过同源 Range 路由播放） |
-
-会话视图的**动作卡片 Tab**：每条预览任务渲染成一个 tab（状态点 + 中文动作名，如 `前进8字 R0.10`、`复合 · 直行→左转→右转`、`单脚悬停 · 右脚4cm`；DEMO/运行中分别带标记与耗时）。横向滚动、自动把当前 tab 滚入视野；点 tab 切换下方 viewer 与参数卡，hover 有完整参数与任务 id 的 tooltip。
-
-会话视图从 standard props 拿 `sessionId`，任务列表走 `GET /api/microduck/tasks?session_id=<id>`（Host 按 `task.session_id` 过滤）；视图头部的 **All sessions** 可放开到全部会话。ownerProps 的 `viewRequest` / `completeViewRequest` 支持「从别处跳到本视图并聚焦任务」的一次性请求（按 task id 或 `call_id` 匹配）。
-
-UI chrome 为英文、主题用 `--dsw-alias-*` token；`localStorage` 持久化选中任务（刷新后保持）。
-
-### 交互式 viewer（Live MuJoCo scene，不是播放 mp4）
-
-会话视图默认 tab 是**真实 MuJoCo 场景**：画面不是预编码视频，而是 Host 侧常驻的 MuJoCo 进程按 viewer 传来的**时间 + 自由相机六参**实时渲染、逐帧回传的 JPEG。
-
-- 交互：拖拽 = 绕体轨道相机（az/el），滚轮 = 缩放（dist 0.12–2.4 m），`Play/Pause`、`±1 帧`、时间轴 scrub、`Follow/Front/Side/Top` 视角预设、阴影开关。
-- 地面是**棋盘格**（builtin checker 纹理 + box 地板；plane 的 UV 退化，且颜色纹理必须落在 `mjTEXROLE_RGB`=1 槽位），mp4 与实时帧共用同一套 `add_checker_floor()`。
-- 数据流：`GET /api/microduck/tasks/<id>/scene`（时长/可交互性/默认相机）→ 循环 `GET .../frame?t&az&el&dist&follow&lx&ly&w&h&shadows&q`（`image/jpeg`，回 `x-mujoco-ms` 渲染耗时）。
-- Host 侧：`lib/frames.js` 的 `FramePool` **单 worker**（每任务一个常驻 `pipeline/frame_server.py`，~800 MB/进程），空闲 **45 s** 回收；viewer 关闭/切任务时主动 `POST /api/microduck/viewer/release` 立即释放。
-- **性能/交互优化**（防止拖垮整个页面的主线程）：默认 **720×480、无阴影、24 fps 上限**；帧直接写 `<img>.src`（**不经 React setState**，HUD/时间轴 4 Hz 节流）；播放**单遍**到结尾即停；页面隐藏或视图不可见（IntersectionObserver）时停止取帧。
-- 实测（900×600、开阴影、含进程内渲染 + 写读文件 + HTTP 往返）：**p50 ≈ 21 ms、p95 ≈ 28 ms、JPEG ≈ 26 KB**；720×480 无阴影更快，交互帧率默认锁在 24 fps 以免抢占主线程。
-- 降级：`engine: demo` 或缺少 `motion.json` 的任务 `scene.interactive=false`，视图自动切到 `Recorded mp4` 并说明原因；真实任务两者都有，可自由切换。
-
----
-
-## 3. 工具契约
-
-### `duck_templates()`
-返回 JSON 字符串：3 个模板（line / arc / figure8）、每个参数的 `type/范围/默认值/中文同义词`、`tuning_rule`、`output_contract`、**`recent_tasks`（最近 5 个任务的完整 params + video_url）**、`last_params`。
-→ 参数微调（「圈再大一点」）就靠它：以 `last_params` 为基准只改一个字段再调 `duck_preview`。
-
-### `duck_preview(params)`
-参数（全部可选，缺省用默认值，因此微调可只传一个字段）：
-
-| 参数 | 取值 | 默认 | 说明 |
-|---|---|---|---|
-| `pattern` | `line` \| `arc` \| `figure8` \| `composite` \| `hover` | `line` | 轨迹；接受中文同义词（直线/绕圈/8字…）；`composite` = 多段序列；`hover` = 原地单脚悬停 |
-| `direction` | `forward` \| `backward` | `forward` | 前进/倒退 |
-| `step_length_m` | 0.02–0.06 | 0.04 | 步长；“步子小一点” → 0.02–0.03 |
-| `radius_m` | 0.05–0.15 | 0.09 | arc/figure8 半径；“圈再大一点” → +0.01–0.02 |
-| `laps` | 0.5–3 | 1 | arc=圈数、figure8=8字个数、line=趟数（1 趟≈0.6 m） |
-| `speed` | `slow` \| `normal` \| `fast` | `normal` | 节奏 |
-| `segments` | 数组（≤6 段） | 见下 | **仅 `composite`**：`{kind:"straight",length_m}` 或 `{kind:"turn",turn_deg,radius_m}`（也接受 `kind:"left"/"right"`，`turn_deg` 正=左、负=右） |
-| `hover_foot` | `left` \| `right` | `right` | **仅 `hover`**：**抬起**的那只脚（另一只支撑） |
-| `lift_height_m` | 0.02–0.08 | 0.04 | **仅 `hover`**：鞋底离地高度；0.04 余量最稳（9°），0.05+ 会更像“抬腿”但余量变小 |
-| `hold_s` | 0.5–5 | 2.5 | **仅 `hover`**：抬起后保持时长 |
-
-`composite` 省略 `segments` 时的默认序列正好对应「往前走，然后向左转弯，再向右转」：
-`[{straight 0.35 m}, {turn +90°, R0.12}, {turn -90°, R0.12}]`。
-范围：straight 0.05–1.5 m、`|turn_deg|` 0.1–180°、转弯半径 0.06–0.30 m（该机器人实测可转下限 ≈0.10 m，更小的半径会被上调并在 `warnings` 说明）。
-
-越界/未知参数**不会静默 clamp**，而是抛出一句带范围、带修改建议的中文错误（模型直接转述给用户）。
-返回：`ok / status / task_id / engine / video_path / video_url / frames / duration_s / geometry_ok / degraded / degrade_reason / warnings / elapsed_s / error / summary`。
-运行超过 `waitMs`（默认 90 s）仍未完成时返回 `status: running` 并提示改用 `duck_status`，**不重复提交任务**。
-
-### `duck_status(task_id)`
-立即返回同一形状；`status=done` 时给 mp4 路径与指标，`status=error` 时给原因（含管线 stderr 尾部）。
-
----
-
-## 4. 配置（`cordis.patch.yml` 的 row config，全部可选）
-
-```yaml
-- id: microduck-preview
-  name: "@local/dsh-microduck-preview"
-  config:
-    engine: auto                      # auto | real | demo
-    assetsRoot: "/Users/founderlin/agent_zoo/microduck_rl-develop"
-    python: "/Users/founderlin/agent_zoo/microduck_rl-develop/.venv/bin/python"
-    dataDir: "~/.dsh/microduck-preview"
-    waitMs: 90000
-    # demoVideo: "/abs/path/to/clip.mp4"   # 覆盖 demo 片段
+```json
+{
+  "pattern": "composite",
+  "segments": [
+    { "kind": "straight", "length_m": 0.2 },
+    { "kind": "turn", "turn_deg": 90, "radius_m": 0.12 },
+    { "kind": "hover", "hover_foot": "right", "lift_height_m": 0.04, "hold_s": 2 },
+    { "kind": "stand", "hold_s": 1 }
+  ]
+}
 ```
 
-**引擎选择**（`auto`）：`pipeline/run_preview.py` 存在 **且** `pipeline/ready.json` 存在 **且** 解释器可执行 → `real`；否则 `demo`。
-`demo` 会把预置片段复制成 `preview.mp4`，并在 `metrics.engine`、工具返回、面板标签（DEMO）三处**明确标注“不是本次参数渲染的动作”**，绝不冒充真实结果。
+`turn_deg` 正值左转、负值右转；`hover_foot` 指抬起的脚，默认抬右脚 0.04 m。`sidestep` 接受 `side` 和 `length_m`，目前会明确替代为相应方向转 90°再直行，实际朝向也会改变。
 
----
+微调只继承本对话上次未失败任务中与当前模式相关的参数。越界参数返回范围错误；几何不可行后采取的动作替代或参数调整会在警告中说明。
 
-## 5. 任务产物（持久化）
+### 奖励与惩罚卡片
 
-```
-~/.dsh/microduck-preview/tasks/<task_id>/
-├─ task.json     # 状态机记录（重启后据此恢复历史；running→error 标记中断）
-├─ params.json   # 本次参数
-├─ preview.mp4   # 预览视频
-├─ metrics.json  # 帧数/时长/几何检查/降级/参数回显
-└─ run.log       # 真实管线的 stdout/stderr（失败时取尾部落错误）
-```
+工作台只展示权重滑块、数值输入和可用的演示按钮。走路与单脚悬停采用不同的初始预设。配方绑定动作任务和对话，保存时生成不可变版本；未启用项不进入审核包。
 
----
+- 目录只登记配置训练环境中已有的真实 Python 函数。函数或参数签名不匹配时，卡片标红且不能启用。
+- 奖励权重 ≥ 0，惩罚权重 ≤ 0。修改权重会更新配方，不会改变当前运动学参考动画。
+- 场地演示比较“正常参考”和“受控扰动”，调用同一个训练函数评分并缓存轨迹和逐帧得分。
+- 运动学输入缺少真实传感器、力矩或控制器历史的项显示“仅训练后可见”，不生成替代得分或假动画。
 
-## 6. Python 管线契约（`pipeline/`）
+场地演示不能预测调整权重后策略会学成什么样。
 
-```
-<python> pipeline/run_preview.py --params-json <dir>/params.json --out-dir <dir>
-```
+### 导出训练审核包
 
-- 退出码 0 → 必须产出 `<dir>/preview.mp4` + `<dir>/metrics.json`（h264/yuv420p、`+faststart`、8–20 s、25 fps）。
-- 非 0 → stderr 最后一行是人话原因，Host 原样回给模型/用户，绝不生成假视频。
-- `metrics.json` 关键字段：`engine:"real"`、`params`、`frames`、`fps`、`duration_s`、`motion_duration_s`、
-  `geometry{ok, degraded, effective_pattern, degrade_reason, hard_error_count, checks{...}}`、`warnings`、`created_at`。
-- 需要新写的两个文件：`author_walk.py`（通用步态 author：前/后、直线/弧线/8字、步长/半径/圈数/速度 → IK → motion.json）
-  与 `run_preview.py`（author → 几何检查 → MuJoCo 渲染 → 两件产物）。
-- **几何检查失败时降级并如实上报**（`geometry.degraded` / `degrade_reason` / `warnings`），不静默给错动作。
+通过 `duck_pack` 工具或 CLI 对已完成的真实任务导出审核包。导出过程检查 motion / command 帧对齐、写入启用的奖励和验收标准，并直接调用训练仓库现有 CPU 环境与 BAM 执行器做参考控制器基线预检。DEMO 和未完成任务不能打包。
 
----
+工具返回包目录、`review_id`、阻塞原因和风险；`duck_verify` 检查产物、机器人源码、奖励函数及工具源码哈希。
 
-## 7. 安装 / 更新 / 卸载
+`handoff_ready` 表示审核输入齐备，仍需人审具体动作、风险和训练预算。训练流程必须显式导入 command / rewards / criteria。动作或物理配置改变后重新打包；奖励变化应使用新配方、新试训阶段。本插件没有批准、训练或部署命令。
+
+## 安装与配置
+
+需要 Node.js ≥ 22.19、Microduck 模型和训练仓库，以及带 MuJoCo、NumPy、SciPy、Pillow、imageio / imageio-ffmpeg 的 Python 环境。真实奖励释义和 BAM 预检还使用训练仓库的运行时；当前 CPU/BAM 入口为该仓库的 `scripts/train_microduck_cpu.py`。
+
+以下是 DSH 插件管理工具的调用示意，不是终端 shell 命令：
 
 ```text
-plugin_manager install_bundle  target=/abs/path/to/dsh-microduck-preview
-plugin_manager set_bundle      target=@local/dsh-microduck-preview enabled=true   # 改完 JS 后重新激活
-plugin_manager remove_bundle   target=@local/dsh-microduck-preview
+plugin_manager install_bundle target=/absolute/path/to/dsh-microduck-preview
+plugin_manager set_bundle target=@local/dsh-microduck-preview enabled=true
+plugin_manager remove_bundle target=@local/dsh-microduck-preview
 ```
 
-安装是「本地目录 link」：包被 link 进 profile 的 `node_modules`，**JS 改动后需要 `set_bundle` 重新激活**（Host 侧），
-Client 侧随页面刷新加载。`pipeline/*.py` 是运行时子进程，改完即生效（无需重装）。
+本地目录安装会链接到 DSH profile。修改 Host JavaScript 后重新激活插件；刷新页面加载 Client。Python 脚本由新任务的子进程读取。DSH 的实际管理工具和参数应以所用版本为准。
 
----
+配置写在 [cordis.patch.yml](cordis.patch.yml) 的插件 row 中。例如：
 
-## 8. 回归清单（DSH / 资产升级后）
+```yaml
+- insert:
+    - id: microduck-preview
+      name: "@local/dsh-microduck-preview"
+      config:
+        engine: real
+        python: "/absolute/path/to/microduck_rl-develop/.venv/bin/python"
+        # 通常可省略，默认从 Python venv 推断资产仓库。
+        # assetsRoot: "/absolute/path/to/microduck_rl-develop"
+        dataDir: "~/.dsh/microduck-preview"
+        waitMs: 90000
+        preflightTask: "Mjlab-Velocity-Flat-MicroDuck"
+        preflightSeeds: [123, 2026]
+```
 
-1. `node test/host.test.mjs`（参数校验、任务状态机、Range/401/404 路由）与 `node test/client.test.mjs`（Client 渲染 smoke）全绿。
-2. `cordis_inspect_query` → `Tool.listTools` 含 `duck_templates` / `duck_preview` / `duck_status`，以及 `duck_doctor` / `duck_rewards` / `duck_explain` / `duck_pack` / `duck_verify`。
-3. Client Slots 占位：`conversation.view:microduck-preview`（会话 View tab，order 20）、`tool.call.toolview:duck_preview`、`sidebar.right.tab.document:microduck-video` 均 `active: true`；且 `main` / `sidebar.panellist` **不再**被本插件占用（已迁移为会话视图）。
-4. 未带 cookie 请求 `/api/microduck/tasks` 返回本插件的 401 JSON（证明路由命中且认证栅栏生效）。
-5. 真实管线：`duck_preview` 返回 `engine: "real"`、`geometry_ok`、`video_path` 文件 >100 KB，面板可播放/拖动进度（Range 生效）。
+| 配置 | 默认 / 行为 |
+| --- | --- |
+| `engine` | `auto`；也可选 `real` 或 `demo` |
+| `python` | `~/agent_zoo/microduck_rl-develop/.venv/bin/python`；保留 venv 路径 |
+| `assetsRoot` | 从选定 Python venv 推断，模型应包含 `src/mjlab_microduck/robot/microduck/robot_groundcontact.xml` |
+| `dataDir` | `~/.dsh/microduck-preview` |
+| `waitMs` | `90000`；工具等待超出此值后返回任务状态，继续查询同一任务 |
+| `demoVideo` | 可选的显式演示片段路径 |
+| `preflightTask` | `Mjlab-Velocity-Flat-MicroDuck` |
+| `preflightSeeds` | `[123, 2026]`；预检接受 1–4 个整数种子 |
+| `taskCriteria` | 可选验收阈值；未指定的任务误差阈值保持 null，不自动判成功 |
 
-### 单脚悬停（`pattern: "hover"`）
+`auto` 在管线脚本、`pipeline/ready.json` 和可执行 Python 都存在时选 `real`，否则选 `demo`。这只是引擎选择检查；实际依赖或渲染失败仍会返回错误。DEMO 使用预置片段，并明确标注“不是按本次参数渲染的动作”。
 
-原地姿态动作：一只脚支撑、另一只脚抬起并保持 `hold_s` 秒再放下。实现要点（`author_walk.py`）：
-- 抬起/放下用**同一条轨迹的镜像回放**，避免 IK 在下降段跳到另一分支（那会自穿模膝盖）；
-- 抬脚时把脚**略微内收+前收**（tuck），既更像真实悬停，也让 IK 保持在稳定分支；
-- 对请求的 `lift_height_m` 自动试 2–3 个邻近距离，取关节余量最好的解（`HOVER_ACCEPT_MARGIN_DEG=6°`）；
-- 支撑脚离地间隙抬到 2.5 mm、根高度略降，避免支撑脚 mesh 沉入地面。
-> 这是**运动学姿态预览**（不是动力学平衡控制器）：几何检查保证不越限位/不穿地/不自碰，但不证明真实机器人能靠控制稳住单脚站立。
+## Agent 工具参考
 
-### 已完成的验收证据（2026-10-27，本机）
+普通使用可直接描述动作，不需要记住工具名。
 
-| 验收项 | 结果 |
-|---|---|
-| 真实管线 `line/forward` | step 0.04 laps 1.5 → 12.8 s，210 帧 / 8.40 s，`effective_pattern: line`，`degraded: false`，margin 15.20°（`pipeline/samples/line_forward_normal/`） |
-| 真实管线 `line/backward` | step 0.04 laps 1.5 → 12.3 s，210 帧 / 8.40 s，`effective_pattern: line`，`degraded: false`，margin 15.19°（`pipeline/samples/line_backward_normal/`） |
-| 真实管线 `figure8/backward` | step 0.025 r 0.10 → 20.5 s，371 帧 / 14.84 s，`effective_pattern: figure8`，`degraded: false`，margin 14.33°、自碰 0，俯视窗为双切圆 8 字（`pipeline/samples/figure8_backward_small/`） |
-| 真实管线经插件 `duck_preview` | `engine: real`，`effective_pattern: figure8`，`degraded: false`，`geometry.ok: true`，**371 帧 / 14.84 s / 1120×640 / 1.17 MB**，插件端到端 **21.7 s**（task `20261027-234950-jbl5`）；`line/backward` 亦 real（245 帧 / 9.8 s，task `20261027-235112-ue4e`） |
-| 一句话填参（全新上下文 agent） | 仅给「倒退走8字，步子小一点」→ 自动 `duck_templates` → `duck_preview(pattern=figure8, direction=backward, step_length_m=0.025, radius_m=0.11)`，并如实转述结果 |
-| 参数微调「圈再大一点」 | 只传 `radius_m: 0.13` → 继承上次 `figure8/backward/0.025`，仅半径变化；不会退回 `line` |
-| 越界参数 | `step_length_m=0.2` → 人话错误（含 0.02–0.06 范围与改法建议），不静默 clamp |
-| 降级诚实性 | demo 片段 / 几何降级 / 失败三种情况各自在工具返回、面板、metrics 三处标注，并显式要求模型不要说成原轨迹 |
-| 单脚悬停 `hover` | 插件真跑 task `20261028-003215-glrn`：`engine: real`、`effective_pattern: hover`、`degraded: false`，**119 帧 / 4.76 s**，端到端 **5.7 s**；几何：margin 9.05°、峰值关节速度 2.19 rad/s、支撑脚 +0.57 mm、自碰 0；数值核对右鞋底 0.0425 m vs 左鞋底 0.0025 m、contact=[1,0] |
-| 认证 | 无 cookie 访问 `/api/microduck/*` → 本插件 401 JSON（路由命中 + Connection 栅栏重放生效） |
-| 交互式 viewer 帧服务 | `test/frames.test.mjs`：真实 python 常驻进程，37+ 帧轨道/时间扫描 → `p50 21.2 ms / p95 31.2 ms`（900×600 开阴影，≈47 fps 上限）；HTTP `GET .../frame` 返回 `image/jpeg` + `x-mujoco-ms`（12.1 ms / 640×440）；`/scene` 正确标记真实任务 `interactive=true`、demo 任务 `false` 且 `/frame` 返回 409 |
+| 工具 | 用途 |
+| --- | --- |
+| `duck_templates` | 五种动作模板、当前参数范围和同调用方最近任务；通常先调用 |
+| `duck_preview` | 提交动作；可传部分参数微调，返回任务 ID、状态和结果摘要 |
+| `duck_status` | 查询同一任务，返回完成结果或错误；不重复提交 |
+| `duck_doctor` | 检查配置路径、模型、奖励函数签名、BAM 入口存在性和引擎选择 |
+| `duck_rewards` | 按任务 list / add / remove / set 奖励项，可设置权重、参数和生效阶段 |
+| `duck_explain` | 为指定任务和奖励项生成或读取缓存释义短片 |
+| `duck_pack` | 导出含物理预检的审核包；不启动 PPO |
+| `duck_verify` | 按 `pack_id` 校验本调用方审核包的版本完整性 |
 
----
+参数的实时合同由 `duck_templates` 给出。工具定义见 [index.js](index.js)，共享校验见 [lib/spec.js](lib/spec.js)。`duck_rewards` 的生效阶段接受 `all`、`walk`、`turn`、`hover`、`stand`、`transition`。
 
-## 9. 与 plan-v0 的差异（实现时按当前 DSH 实际能力调整）
+## 产物与检查边界
 
-| plan-v0 | 实现 | 原因 |
-|---|---|---|
-| §2/§4「V1：`ctx.documentPreviews` + `sidebar.right.tab.document`」 | **已实现**（`microduck-video` 渲染器 + Range 路由） | 该服务在 0.2.1-rc.3 确实存在（由 `dsh-client-ui-sidebar-documentpreview` 提供），故保留 |
-| §2「V1：视频出现在对话流」 | **`tool.call.toolview` key `duck_preview`** | 当前 DSH 的视频/文件呈现走 tool view + document preview，而非旧式 sidebar 文档 tab |
-| §2「V2+V3：左侧常驻大 viewer，对话落右侧」 | **`conversation.view` 会话视图**（Session header 的 View tab，Chat/Trajectory 之后），默认展示**实时 MuJoCo 场景** | DSH 布局固定为「左 sidebar / 中央 main / 右 rightbar」，插件改成会话视图后：viewer 与 Chat 同属该会话的并列 View tab，切换成本最低；同时天然拿到 `sessionId` 做「只看本会话的预览」 |
-| 旧版实现（本插件早期迭代） | 曾用根 `main` 面板 + `sidebar.panellist` 图标；**已移除** | 按需求改为「DSH 会话视图插件」：不再占据全局主面板/侧栏图标，改为会话内 View tab |
-| §2/§4「viewer 播放 mp4」 | 主面板改为**按需实时渲染**（Host 常驻 `frame_server.py` + 逐帧 JPEG 路由），mp4 保留为第二 tab 与下载 | 用户明确要求「不要视频，要真实 MuJoCo 场景下的 viewer」：每帧都由真实 MuJoCo 模型按当前相机/时间渲染 |
-| §4「Range 用 `ctx.fs.readByteRange` 1 MiB 分块」 | 直接 `node:fs` 流 + 标准 Range 语义（206/416/后缀范围） | 插件 Host 代码即 Node 进程；`Response`/流式更简单，且已由单测覆盖 |
-| §3「先用假管线」 | `engine: demo`（预置片段）**显式标注**，`ready.json` 出现后自动切真实管线 | 保证「假管线」阶段也不会把 demo 当成用户要的动作 |
+默认数据目录结构如下：
 
----
+```text
+~/.dsh/microduck-preview/
+├── tasks/<task_id>/
+│   ├── task.json
+│   ├── params.json
+│   ├── motion.json          # 真实动作，50 Hz / 14 关节
+│   ├── command.json         # 同帧指令、阶段和支撑脚
+│   ├── preview.mp4
+│   ├── metrics.json
+│   └── run.log
+├── sessions/<session_id>/rewards/
+│   ├── <task_id>.json
+│   └── versions/            # 不可变配方版本
+├── explain/<task_id>/<term_id>-<cache_key>/
+│   ├── scores.json
+│   └── explain.mp4          # 只有支持真实函数评分与渲染的项才生成
+└── packs/<pack_id>/
+    ├── motion.json
+    ├── command.json
+    ├── rewards.json
+    ├── task_criteria.json
+    ├── physics.json
+    ├── robot_sources.json
+    ├── tool_sources.json
+    ├── review.json
+    └── state.json
+```
 
-## 10. 已知限制
+审核包还保留预览、预检日志和成功采集的 BAM 回放 / 模型文件。当前动作可在重启后恢复；服务重启时正在运行的任务会标成中断错误。
 
-- **渲染耗时（实测）**：本机 CPU 逐帧 MuJoCo 渲染，单次 **约 20–30 s**（authoring 5–10 s + 渲染 11–15 s，1120×640 / 25 fps；figure-8 一例为 371 帧 / 14.8 s 成片、总 21.7 s），远快于任务书假设的 1–3 分钟；`duck_preview` 默认最多阻塞 90 s，足够一次跑完，超时才返回 `running` 交由 `duck_status` 轮询。
-- **并发**：单槽队列（一次只跑一个渲染），第二个请求排队（`queued`）；工具调用被取消/超时会终止子进程。
-- **figure8 在 Microduck 上的可行性**：`figure8` 需要两步之间的转向反向（腰部切点处曲率反号），而本机器人无踝 yaw、髋 yaw 仅 ±25°；若 `author_walk.py` 的几何检查判定某段不可行，会**降级为弧线组合**，并在 `metrics.geometry.degraded/degrade_reason`、工具返回与面板 DEGRADED 标记三处如实上报——**绝不把降级结果说成原轨迹**。
-- **演示片段 ≠ 参数渲染**：`engine: demo` 时返回的是预置片段（`reviews/marseille-v17-drag360/fullview.mp4`，那是球类 pivot 动作），与用户描述无关，插件会在工具结果、面板标签、metrics 里同时标注 DEMO；只有 `pipeline/ready.json` 存在时才进入 `real`。
-- **交互 viewer 的边界**：帧由 Host 侧 MuJoCo 逐帧渲染后回传（p50 ≈ 21 ms），所以拖拽/播放的流畅度取决于本机 CPU；单 worker 同时只处理一个请求（viewer 侧已做「上一帧到才发下一帧」的背压），最多 2 个任务各一个 worker，空闲 120 s 回收。默认渲染 900×600（上限 1280×800）、JPEG q85（≈26 KB/帧）；要更高清可改 URL 参数 `w/h`，代价是帧率下降。这不是 WebGL 客户端仿真，而是**真实 MuJoCo 离屏渲染**——好处是画面与 `mj_forward` 完全一致，坏处是每帧要走一次 HTTP。
-- **浏览器侧视觉**（面板排版、拖拽手感、自动切换）无法由 Host 侧断言；已验证 slot 注册为 active、帧路由 JPEG/`x-mujoco-ms`、`/scene` 可交互标记与 Client 渲染 smoke，真实观感需在页面里人工确认。
+三个结果需要分别理解：
 
-## 共享动作工作台
+- **几何检查**检查关节范围、穿地和自碰撞等参考轨迹问题，不证明动态平衡。
+- **BAM 预检**通过原 action scale / offset 和 BAM 执行器回放参考关节目标。参考姿态只在初始化时设置；预览代码不固定根部、不加辅助外力、不预填电机历史。首次终止即停止记录，排除自动 reset 后的数据。环境自身的随机化保持启用。
+- **策略训练和实机验收**不在本插件内执行。BAM 原始参考控制器未完成全程会作为风险记录，不能直接推断该动作可学或不可学。
 
-Microduck 对话面板加载包内 `/api/microduck/workbench/`，与 skill 的本地 viewer 使用同一份资源。保留 DSH 浏览器认证。支持时间轴增删/排序、逐帧速度曲线与支撑脚、任务绑定的奖励/惩罚卡片、释义 MP4 和审核包导出。
+## 开发接入
 
-工具新增 `duck_doctor`、`duck_rewards`（list/add/remove/set）、`duck_explain`、`duck_pack`、`duck_verify`。所有动作和配方按调用会话隔离；跨会话任务不可用作调参基准。模型路径可省略，默认从 Python venv 推断。可配置 `preflightTask`、`preflightSeeds`、`taskCriteria`，与 skill 使用同一合同。
+Host 导出 `name` / `inject` / `apply`，依赖 `tools`、`webServer`。Client 通过 DSH ModuleLoader 注册 Web 插件。
 
-审核包保存 motion/command/rewards/task_criteria/physics 和文件哈希，物理预检复用训练仓库现有 CPU/BAM 环境。首次终止停止记录，保留失败原因；几何通过不代表可上实机。该插件不启动 PPO，不依赖外部动作模仿 skill。
+| 入口 | 当前实现 |
+| --- | --- |
+| `conversation.view:microduck-preview` | 对话的 Microduck 视图，order 20；加载 `/api/microduck/workbench/?session_id=...` 同源 iframe |
+| `tool.call.toolview:duck_preview` | 按 `callId` 关联任务的内嵌预览卡片 |
+| `sidebar.right.tab.document:microduck-video` | 宿主提供 `documentPreviews` 时注册的可选视频预览 |
+
+工作台为中文界面，只展示当前动作与权重设置。代码资源统一位于 [assets/](assets/)，与 skill viewer 使用同一份文件；HTML 中脚本和样式 URL 带内容哈希，以更新资源版本。
+
+工作台从宿主 Session props 读取 `session_id`；Agent 工具当前使用 `exec.agent.id` 记录任务归属。接入具体 DSH 版本时，需核对这两个标识对应同一对话。新的共享工作台已做源码与模拟宿主测试；这些检查不等于已在当前真实 DSH 版本完成全部接入验收。
+
+所有 HTTP 路由注册在 `/api/microduck`。处理器会先调用 DSH Connection 的 `requestRejection({ headers })`；宿主返回认证拒绝时，在提供数据或资源前返回相应 401 / 403。应从已认证的 DSH 页面访问工作台。工具和奖励 / 打包接口也检查任务归属，不接受其他调用方的任务作为调参或导出目标。
+
+主要路由：
+
+| 路由 | 内容 |
+| --- | --- |
+| `GET /api/microduck/workbench/` | 共享工作台 HTML、脚本与样式 |
+| `GET /api/microduck/tasks?session_id=...` | 当前对话任务列表 |
+| `POST /api/microduck/preview` | 工作台提交新任务 |
+| `GET /api/microduck/tasks/<id>` | 详情、指标和错误 |
+| `GET /api/microduck/tasks/<id>/scene` | 交互场景元数据 |
+| `GET /api/microduck/tasks/<id>/frame` | 真实 MuJoCo JPEG 帧 |
+| `GET|HEAD /api/microduck/tasks/<id>/video` | 支持 Range 的 MP4 |
+| `GET /api/microduck/tasks/<id>/command` | 逐帧指令 |
+| `GET|POST /api/microduck/rewards` | 奖励目录和任务配方 |
+| `POST /api/microduck/tasks/<id>/explain` | 生成释义短片 |
+| `POST /api/microduck/tasks/<id>/pack` | 导出审核包 |
+| `GET /api/microduck/packs/<id>/verify` | 校验审核包 |
+| `POST /api/microduck/viewer/release` | 释放当前帧 worker |
+
+`FramePool` 在 DSH 中最多保留一个 worker，默认空闲 45 s 回收。工作台隐藏或不可见时停止取帧，切换任务时释放 worker。帧率和渲染耗时依赖硬件与模型，不作固定性能承诺。
+
+## 开发验证
+
+从此目录运行：
+
+```sh
+npm test
+/path/to/project/.venv/bin/python -B test/pipeline_test.py
+```
+
+`npm test` 覆盖 Host / Client smoke、任务状态与参数、会话隔离、共享资源一致性、奖励配方和哈希校验。真实帧集成检查默认跳过，需要本机模型、Python、可用图形环境，以及默认 DSH 数据目录中一个已完成且保留 motion.json 的真实任务：
+
+```sh
+npm run test:frames
+# 或显式指定本机已有的真实任务：
+node test/frames.test.mjs TASK_ID
+```
+
+这些测试与手工真实 DSH 接入检查分开进行。更新 DSH 后还应确认八个工具注册、Microduck 对话视图加载、调用方标识匹配、未认证请求被宿主拒绝、真实任务可播放和导出。
+
+更详细的 Python 管线说明见 [pipeline/README.md](pipeline/README.md)。现有 [样例文件](pipeline/samples/) 和 `pipeline/ready.json` 是历史机器上的运行证据，不能替代当前环境的检查，也不代表共享工作台已经在所有 DSH 版本上验证。

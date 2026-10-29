@@ -24,9 +24,9 @@ node scripts/install.mjs
 node scripts/install.mjs --check
 ```
 
-The installer links the skill into `${CODEX_HOME:-~/.codex}/skills/codex-microduck-preview`; it refuses to overwrite another skill or directory. The CLI resolves the real installation path so sibling imports continue to work. Moving the complete project requires recreating the link. The new DSH copy is not automatically activated in DSH: the existing original installation stays in place.
+The installer links the parent and all four supporting skills into `${CODEX_HOME:-~/.codex}/skills/`. Add `--cursor` to target `~/.cursor/skills/`. It refuses to overwrite another skill or directory. The CLI resolves the real installation path so sibling imports continue to work. Moving the complete project requires recreating the link. The new DSH copy is not automatically activated in DSH: the existing original installation stays in place.
 
-To remove only this installation link, run `node scripts/install.mjs --uninstall`. Stop the local service separately if desired. Neither operation deletes the project or tasks. Codex may need a new chat or reload to discover a newly installed skill.
+To remove this project’s six installation links, run `node scripts/install.mjs --uninstall`; add `--cursor` for Cursor links. Stop the local service separately if desired. Neither operation deletes the project or tasks. Codex may need a new chat or reload to discover a newly installed skill.
 
 ## Configuration
 
@@ -39,9 +39,10 @@ Environment variables override runtime configuration:
 | `MICRODUCK_ASSET_ROOT` | Root of the Microduck model/assets checkout |
 | `MICRODUCK_DATA_DIR` | Task and service directory; default `<project>/.runtime/codex` |
 | `MICRODUCK_PORT` | Loopback HTTP port; default `47832` |
-| `CODEX_THREAD_ID` | Current conversation identifier when `--session` is omitted |
+| `CODEX_THREAD_ID` | Current Codex conversation identifier when `--session` is omitted |
+| `CURSOR_CHAT_ID` | Cursor conversation identifier when both `--session` and `CODEX_THREAD_ID` are absent |
 
-Default machine paths are the existing Microduck Python and assets paths discovered during development. They can be replaced for another machine. The service listens only on `127.0.0.1`. Changing a running service's settings requires `stop`, then a new command to start it with the new settings. Do not edit global Codex configuration to use this CLI-based skill.
+The default Python points to the local training checkout. Assets are inferred from the selected venv interpreter unless explicitly configured. They can be replaced for another machine. The service listens only on `127.0.0.1`. Changing a running service's settings requires `stop`, then a new command to start it with the new settings. Do not edit global Codex configuration to use this CLI-based skill.
 
 ## Commands
 
@@ -53,7 +54,6 @@ node scripts/microduck.mjs templates --session example-chat
 node scripts/microduck.mjs preview --session example-chat --params '{"pattern":"figure8","direction":"backward","step_length_m":0.025,"radius_m":0.10}'
 node scripts/microduck.mjs status --session example-chat --task TASK_ID
 node scripts/microduck.mjs preview --session example-chat --params '{"radius_m":0.12}'
-node scripts/microduck.mjs history --session example-chat
 node scripts/microduck.mjs viewer --session example-chat
 node scripts/microduck.mjs stop
 ```
@@ -64,7 +64,7 @@ For larger JSON, write a task-specific file and use `--params-file /absolute/par
 
 ## Viewer, results, and boundaries
 
-Open the returned `viewer_url` in Codex's built-in browser, preferably on the right. The URL scopes history to one session and optionally selects a task. The viewport orbits on drag, zooms on wheel, follows or resets the camera, scrubs time, and plays once to the end. A recorded MP4 fallback remains available for completed tasks that lack interactive motion data. Hidden viewers stop requesting frames and release their worker.
+Open the returned `viewer_url` in Codex's built-in browser, preferably on the right. The URL scopes the current action to one session. The playground orbits on drag, zooms on wheel, and supports execute, stop, reset and on-demand video export. Hidden viewers stop requesting frames and release their worker.
 
 Use the viewer's `导出 MP4` link for browser download, or the task's `video_path` for local file delivery. Video requests support HTTP Range for seeking. Task artifacts remain under `<dataDir>/tasks/<task_id>/`, including parameters, motion, metrics, preview MP4, and logs. Keep exported deliverables in a user-requested location rather than copying runtime internals into unrelated projects.
 
@@ -72,7 +72,7 @@ The web viewer has no dependency on a logged-in DSH page. Its appearance matches
 
 ## Motion workbench
 
-The parent routes to four sibling skills: runtime, motion-compose, reward-studio and train-pack. The installer installs all five links; `--cursor` selects `~/.cursor/skills`. Keep these folders alongside the DSH package. `CURSOR_CHAT_ID` is accepted when `CODEX_THREAD_ID` is absent; otherwise pass the current chat id explicitly.
+The parent routes to four sibling skills: runtime, motion-compose, reward-studio and train-pack. The installer installs all six links; `--cursor` selects `~/.cursor/skills`. Keep these folders alongside the DSH package. `CURSOR_CHAT_ID` is accepted when `CODEX_THREAD_ID` is absent; otherwise pass the current chat id explicitly.
 
 Assets are inferred from the selected Python venv. Port `47832` is only preferred; occupied ports trigger an ephemeral loopback port. Always use the returned URL. The two hosts serve the same workbench assets from `dsh-microduck-preview/assets`.
 

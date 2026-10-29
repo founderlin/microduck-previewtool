@@ -76,6 +76,7 @@ export async function startServer(config) {
   const logger = (...args) => console.error('[microduck]', ...args);
   const store = new LocalStore({ pluginDir: config.pluginDir, config, logger }).init();
   const frames = new FramePool({ pluginDir: config.pluginDir, python: config.python, assetRoot: config.assetsRoot, idleMs: config.idleMs ?? 45_000, maxWorkers: 2, logger });
+  store.onSuperseded = (record) => frames.release(record.id);
   // In a saturated pool don't silently allocate a third heavyweight GL renderer.
   const render = frames.render.bind(frames);
   let lastRender = Promise.resolve();
@@ -119,7 +120,7 @@ export async function startServer(config) {
     return record;
   };
 
-  const workbench = createWorkbench({ config, store, send, serveVideo, owns, preview: false });
+  const workbench = createWorkbench({ config, store, send, serveVideo, frames, owns, preview: false });
   server = http.createServer(async (req, res) => {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'no-referrer');

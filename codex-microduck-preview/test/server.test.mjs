@@ -21,7 +21,7 @@ const configuration = (name = 'main') => ({
   engine: 'demo', demoVideo: clip, idleMs: 100,
 });
 let service;
-let firstTask, secondSessionTask;
+let firstTask, supersededTask, secondSessionTask;
 const sessionQuery = (id = 'chat-A') => `session_id=${encodeURIComponent(id)}`;
 async function request(route, { method = 'GET', data, headers = {} } = {}) {
   const response = await fetch(service.origin + '/api/microduck' + route, {
@@ -149,15 +149,14 @@ describe('local preview service', () => {
     assert.equal(presets.recent_tasks.length, 1);
     assert.equal(presets.last_params.pattern, 'line');
     assert.equal(presets.parameter_schema.step_length_m.minimum, 0.02);
+    supersededTask = firstTask;
+    firstTask = taskId(tweak.result);
   });
 
-  it('supports an explicit older baseline within the same conversation', async () => {
-    const result = await preview('chat-A', { laps: 0.5 }, { base_task_id: firstTask, wait_ms: 5_000 });
-    assert.equal(result.response.status, 200);
-    assert.equal(result.result.status, 'done');
-    assert.equal(result.result.params.radius_m, 0.10);
-    assert.equal(result.result.params.laps, 0.5);
-    assert.equal(result.result.params.pattern, 'figure8');
+  it('does not retain a superseded action as an older baseline', async () => {
+    const result = await preview('chat-A', { laps: 0.5 }, { base_task_id: supersededTask, wait_ms: 5_000 });
+    assert.equal(result.response.status, 404);
+    assert.deepEqual((await request(`/tasks?${sessionQuery()}`)).result.tasks.map(taskId), [firstTask]);
   });
 
   it('serves exact video byte ranges and refuses demo interactive frames', async () => {
@@ -275,7 +274,7 @@ describe('failure and shutdown boundaries', () => {
     for (const id of records) {
       const record = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'tasks', id, 'task.json')));
       assert.equal(record.status, 'error');
-      assert.match(record.error, /中断/);
+      assert.match(record.error, /中断|替代/);
       assert.equal('_child' in record, false);
     }
     const restored = await startServer(config);

@@ -902,7 +902,7 @@ window.__ModuleLoader__.load({
           task ? statusChip(task) : null),
         h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, label),
         task && (task.status === 'done' || task.status === 'error')
-          ? h(VideoCard, { task })
+          ? null
           : h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
             h('span', { className: 'mduck-pulse' }), 'MuJoCo is rendering the requested motion (1–3 min)…'),
         task && task.status === 'done'

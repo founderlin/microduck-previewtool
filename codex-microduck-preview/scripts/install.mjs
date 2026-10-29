@@ -9,7 +9,7 @@ const args = process.argv.slice(2);
 const cursor = args.includes('--cursor');
 const mode = args.includes('--check') ? 'check' : args.includes('--uninstall') ? 'uninstall' : 'install';
 const skillsRoot = cursor ? path.join(os.homedir(), '.cursor/skills') : path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'skills');
-const names = ['codex-microduck-preview', 'microduck-preview-runtime', 'microduck-motion-compose', 'microduck-reward-studio', 'microduck-train-pack'];
+const names = ['duck_go', 'codex-microduck-preview', 'microduck-preview-runtime', 'microduck-motion-compose', 'microduck-reward-studio', 'microduck-train-pack'];
 const emit = (v) => process.stdout.write(JSON.stringify(v) + '\n');
 try {
   if (args.some((a) => !['--cursor', '--check', '--uninstall'].includes(a)) || (args.includes('--check') && args.includes('--uninstall'))) throw new Error('支持 --cursor、--check 或 --uninstall。');
@@ -28,6 +28,6 @@ try {
       if (mode === 'install' && !entry.matching) fs.symlinkSync(entry.source, entry.target, 'dir');
       if (mode === 'uninstall' && entry.matching) fs.unlinkSync(entry.target);
     }
-    emit({ ok: true, mode, entries, message: '只管理本项目的五个技能链接；源码与任务保留。' });
+    emit({ ok: true, mode, entries, message: '只管理本项目的六个技能链接；源码与任务保留。' });
   }
 } catch (e) { emit({ ok: false, error: e.message }); process.exitCode = 1; }

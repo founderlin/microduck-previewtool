@@ -127,7 +127,7 @@ function pipeFile(req, res, filePath, range) {
 export function createApiHandler(options) {
   const { store, templates, guard, logger = () => {} } = options;
   const apiPrefix = options.apiPrefix ?? API_PREFIX;
-  const workbench = createWorkbench({ config: workbenchConfig(store), store, send: sendJson, serveVideo });
+  const workbench = createWorkbench({ config: workbenchConfig(store), store, send: sendJson, serveVideo, frames: options.frames });
 
   return async function handler(req, res) {
     const url = new URL(req.url ?? '/', 'http://localhost');

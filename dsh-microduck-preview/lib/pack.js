@@ -32,7 +32,8 @@ export async function packTask(config, record, owner) {
   const dir = path.join(config.dataDir, 'packs', `${record.id}-${randomUUID().slice(0, 8)}`); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const write = (name, value) => fs.writeFileSync(path.join(dir, name), JSON.stringify(value, null, 2) + '\n');
   write('state.json', { status: 'preflight_running', new_PPO_updates: 0 });
-  for (const name of ['motion.json', 'command.json', 'preview.mp4']) fs.copyFileSync(path.join(taskDir, name), path.join(dir, name));
+  for (const name of ['motion.json', 'command.json']) fs.copyFileSync(path.join(taskDir, name), path.join(dir, name));
+  if (fs.existsSync(path.join(taskDir, 'preview.mp4'))) fs.copyFileSync(path.join(taskDir, 'preview.mp4'), path.join(dir, 'preview.mp4'));
   write('rewards.json', rewards);
   const criteria = config.taskCriteria ?? { minimum_pass_fraction: 0.8, maximum_mean_joint_rmse_deg: null, maximum_tilt_deg: null, maximum_foot_rmse_mm: null, minimum_contact_agreement: null, maximum_support_speed_mm_s: null };
   const criterionKeys = ['minimum_pass_fraction', 'maximum_mean_joint_rmse_deg', 'maximum_tilt_deg', 'maximum_foot_rmse_mm', 'minimum_contact_agreement', 'maximum_support_speed_mm_s'];
@@ -78,10 +79,10 @@ export async function explainTerm(config, record, term) {
   const motion = path.join(taskDir, 'motion.json');
   const validation = validateCatalog(config, true).find((v) => v.id === term.id);
   if (!validation?.ok) throw new Error(validation?.error ?? '奖励函数不可解析。');
-  const cache_key = createHash('sha256').update(JSON.stringify({ motion: sha(motion), command: sha(path.join(taskDir, 'command.json')), term, source: validation.source_sha256, tool: sha(path.join(config.pluginDir, 'pipeline/explain_term.py')), model: sha(path.join(config.assetsRoot, 'src/mjlab_microduck/robot/microduck/robot_groundcontact.xml')) })).digest('hex').slice(0, 16);
+  const cache_key = createHash('sha256').update(JSON.stringify({ motion: sha(motion), command: sha(path.join(taskDir, 'command.json')), term: { ...term, selected: term.selected ? { params: term.selected.params } : null }, mode: 'scene-v1', source: validation.source_sha256, tool: sha(path.join(config.pluginDir, 'pipeline/explain_term.py')), model: sha(path.join(config.assetsRoot, 'src/mjlab_microduck/robot/microduck/robot_groundcontact.xml')) })).digest('hex').slice(0, 16);
   const dir = path.join(config.dataDir, 'explain', record.id, `${term.id}-${cache_key}`); const scores = path.join(dir, 'scores.json');
   if (fs.existsSync(scores)) return { ...JSON.parse(fs.readFileSync(scores)), cache_key, cached: true };
   fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'term.json'), JSON.stringify(term, null, 2));
-  await run(config, 'explain_term.py', ['--motion-json', motion, '--command-json', path.join(taskDir, 'command.json'), '--term-json', path.join(dir, 'term.json'), '--out-dir', dir, '--asset-root', config.assetsRoot]);
+  await run(config, 'explain_term.py', ['--motion-json', motion, '--command-json', path.join(taskDir, 'command.json'), '--term-json', path.join(dir, 'term.json'), '--out-dir', dir, '--asset-root', config.assetsRoot, '--trajectory-only']);
   return { ...JSON.parse(fs.readFileSync(scores)), cache_key, cached: false };
 }

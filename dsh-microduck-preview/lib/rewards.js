@@ -45,6 +45,16 @@ export function loadSelection(config, sessionId, pattern = 'line', taskId) {
   if (taskId) return { catalog, ...persist(config, sessionId, current) };
   return current;
 }
+/** Carry weight choices forward to the new action while retaining its preset. */
+export function inheritSelection(config, sessionId, pattern, taskId, previous) {
+  const current = loadSelection(config, sessionId, pattern, taskId);
+  if (!previous) return current;
+  for (const entry of current.terms) {
+    const old = previous.terms.find((item) => item.id === entry.id);
+    if (old) Object.assign(entry, { weight: old.weight, enabled: old.enabled });
+  }
+  return persist(config, sessionId, current);
+}
 function persist(config, sessionId, current) {
   const { catalog, ...document } = current;
   document.version = hash(document.terms);

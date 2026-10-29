@@ -5,6 +5,10 @@ description: Microduck 动作工作台入口，按需求分发运行时诊断、
 
 # Microduck 动作工作台
 
+只有用户消息以完整 `/duck_go` 开头（之后为空白或消息结束），或用户显式调用 `$duck_go` skill 时，才通过对话修改动作或权重；普通对话不执行修改。仅输入入口时说明用法。无法理解的指令先说明，不猜测执行。修改动作后展示更新后的当前动作，等待用户在场地中点击执行。此规则不拦截工作台自身的按钮和滑块。
+
+宿主必须能够把 `/duck_go` 原文传给本 skill；不要假称已注册宿主原生斜杠命令。如果宿主拦截该输入，明确报告限制。
+
 先按任务读取一个子 skill，再调用本目录 `scripts/microduck.mjs`。通过符号链接安装时，先解析本 skill 的真实目录；四个子 skill 与本目录相邻。
 
 - doctor、启动服务、打开 viewer、导出 MP4、DEMO/降级/报错：读 [microduck-preview-runtime](../microduck-preview-runtime/SKILL.md)。

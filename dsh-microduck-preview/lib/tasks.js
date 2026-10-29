@@ -17,7 +17,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { inferAssetsRoot, DEFAULT_PYTHON } from './runtime.js';
-import { loadSelection } from './rewards.js';
+import { loadSelection, inheritSelection } from './rewards.js';
 
 const MAX_LOG_TAIL = 1600;
 const DEMO_RENDER_MS = 2200;
@@ -106,6 +106,7 @@ export class PreviewStore {
     this.running = null;
     this.queue = [];
     this.waiters = new Map();
+    this.exporting = new Set();
     this.initialised = false;
   }
 
@@ -297,6 +298,12 @@ export class PreviewStore {
    */
   create(params, meta = {}) {
     this.init();
+    const previous = meta.sessionId ? this.listForSession(meta.sessionId).find((item) => item.status === 'done') : null;
+    if (meta.sessionId) {
+      for (const pending of this.listForSession(meta.sessionId).filter((item) => item.managed_current && ['queued', 'running'].includes(item.status))) {
+        this.cancel(pending, '已被当前对话的新指令替代。');
+      }
+    }
     const id = newTaskId();
     const dir = path.join(this.tasksDir, id);
     fs.mkdirSync(dir, { recursive: true });
@@ -310,6 +317,7 @@ export class PreviewStore {
       engine_reason: reason,
       call_id: meta.callId ?? null,
       session_id: meta.sessionId ?? null,
+      managed_current: Boolean(meta.sessionId),
       created_at: nowIso(),
       updated_at: nowIso(),
       started_at: null,
@@ -322,7 +330,9 @@ export class PreviewStore {
     });
     this.tasks.set(id, record);
     if (record.session_id && fs.existsSync(path.join(this.pluginDir, 'rewards/catalog.json'))) {
-      const recipe = loadSelection({ ...this.config, pluginDir: this.pluginDir, dataDir: path.dirname(this.tasksDir), python: this.python, assetsRoot: this.assetsRoot }, record.session_id, params.pattern, id);
+      const rewardConfig = { ...this.config, pluginDir: this.pluginDir, dataDir: path.dirname(this.tasksDir), python: this.python, assetsRoot: this.assetsRoot };
+      const oldRecipe = previous ? loadSelection(rewardConfig, record.session_id, previous.params.pattern, previous.id) : null;
+      const recipe = inheritSelection(rewardConfig, record.session_id, params.pattern, id, oldRecipe);
       record.initial_reward_version = recipe.version;
     }
     this.persist(record);
@@ -368,11 +378,29 @@ export class PreviewStore {
       ? Math.round((Date.now() - Date.parse(record.started_at)) / 100) / 10
       : record.elapsed_s ?? null;
     this.persist(record);
+    if (record.status === 'done' && record.managed_current && this.listForSession(record.session_id)[0]?.id === record.id) this.pruneSession(record.session_id);
     const set = this.waiters.get(record.id);
     if (set) {
       this.waiters.delete(record.id);
       for (const wake of set) wake();
     }
+  }
+
+  /** Prune replaced actions after any in-flight export has finished. */
+  pruneSession(sessionId) {
+    const record = this.listForSession(sessionId)[0];
+    if (record?.status !== 'done' || !record.managed_current) return;
+      for (const old of this.listForSession(record.session_id)) {
+        if (old.id === record.id || !old.managed_current || old === this.running || this.exporting.has(old.id) || ['running', 'queued'].includes(old.status)) continue;
+        this.tasks.delete(old.id);
+        this.onSuperseded?.(old);
+        fs.rmSync(path.join(this.tasksDir, old.id), { recursive: true, force: true });
+        const rewardDir = path.join(path.dirname(this.tasksDir), 'sessions', old.session_id, 'rewards');
+        fs.rmSync(path.join(rewardDir, `${old.id}.json`), { force: true });
+        const versions = path.join(rewardDir, 'versions');
+        if (fs.existsSync(versions)) for (const name of fs.readdirSync(versions)) if (name.startsWith(`${old.id}-`)) fs.rmSync(path.join(versions, name), { force: true });
+        fs.rmSync(path.join(path.dirname(this.tasksDir), 'explain', old.id), { recursive: true, force: true });
+      }
   }
 
   /** Mark one task failed with a human-readable reason. */
@@ -457,7 +485,7 @@ export class PreviewStore {
       MICRODUCK_PYTHON: this.python,
       PYTHONPATH: [path.join(this.assetsRoot, 'src'), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
     };
-    const args = [this.pipelineScript, '--params-json', path.join(dir, 'params.json'), '--out-dir', dir];
+    const args = [this.pipelineScript, '--params-json', path.join(dir, 'params.json'), '--out-dir', dir, '--motion-only'];
     this.logger('running pipeline', record.id, this.python, args.join(' '));
 
     const child = spawn(this.python, args, { cwd: this.pluginDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -468,7 +496,6 @@ export class PreviewStore {
     const exitCode = await new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('close', (code, signal) => {
-        log.end();
         if (signal) resolve(128);
         else resolve(code ?? 1);
       });
@@ -476,6 +503,7 @@ export class PreviewStore {
       log.end();
       throw new Error(`无法启动 Python 管线：${error?.message ?? error}。检查 config.python 指向的解释器。`);
     });
+    await new Promise((resolve) => log.end(resolve));
     record._child = null;
     record.exit_code = exitCode;
 
@@ -486,7 +514,7 @@ export class PreviewStore {
     }
     const metricsPath = path.join(dir, 'metrics.json');
     const videoPath = path.join(dir, 'preview.mp4');
-    if (!fs.existsSync(videoPath)) throw new Error('管线退出码为 0，但没有生成 preview.mp4。');
+    if (!fs.existsSync(path.join(dir, 'motion.json')) && !fs.existsSync(videoPath)) throw new Error('管线退出码为 0，但没有生成动作轨迹。');
     if (!fs.existsSync(metricsPath)) throw new Error('管线退出码为 0，但没有生成 metrics.json。');
     let metrics = null;
     try {
@@ -496,7 +524,39 @@ export class PreviewStore {
     }
     record.metrics = metrics;
     record.metrics_summary = this.summarizeMetrics(metrics);
-    record.video_path = videoPath;
+    record.video_path = fs.existsSync(videoPath) ? videoPath : null;
+  }
+
+  /** Encode the already-authored trajectory only when the user requests a video. */
+  async exportVideo(record) {
+    const dir = path.join(this.tasksDir, record.id);
+    const video = path.join(dir, 'preview.mp4');
+    if (fs.existsSync(video)) return video;
+    if (record.status !== 'done' || record.engine !== 'real') throw new Error('只有已完成的真实动作可以导出视频。');
+    this.exporting.add(record.id);
+    const temp = fs.mkdtempSync(path.join(dir, '.export-'));
+    try {
+      const args = [this.pipelineScript, '--params-json', path.join(dir, 'params.json'), '--out-dir', temp, '--render-motion', path.join(dir, 'motion.json')];
+      const env = { ...process.env, PYTHONUNBUFFERED: '1', MPLCONFIGDIR: path.join(temp, '.mpl'), MICRODUCK_ASSET_ROOT: this.assetsRoot, MICRODUCK_PYTHON: this.python, PYTHONPATH: [path.join(this.assetsRoot, 'src'), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) };
+      let output = '';
+      await new Promise((resolve, reject) => {
+        const child = spawn(this.python, args, { cwd: this.pluginDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        child.stdout.on('data', chunk => { output = (output + chunk).slice(-4000); });
+        child.stderr.on('data', chunk => { output = (output + chunk).slice(-4000); });
+        child.once('error', reject);
+        child.once('close', code => code === 0 ? resolve() : reject(new Error(`视频导出失败：${output.trim().split('\n').pop()}`)));
+      });
+      if (!fs.existsSync(path.join(temp, 'preview.mp4'))) throw new Error('视频导出没有生成文件。');
+      fs.renameSync(path.join(temp, 'preview.mp4'), video);
+      this.hydrate(record); this.persist(record);
+      return video;
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+      // Allow the browser to fetch the exported file before pruning an action
+      // that was replaced while encoding was in progress.
+      const timer = setTimeout(() => { this.exporting.delete(record.id); if (record.session_id) this.pruneSession(record.session_id); }, 60_000);
+      timer.unref?.();
+    }
   }
 
   /** Stop one task (used when the calling tool is aborted). */

@@ -34,7 +34,7 @@ export function workbenchAsset(config, name, embedded = false) {
 
 // Shared by the standalone skill viewer and the DSH panel. The host applies its
 // authentication/origin fence before dispatch; every recipe is bound to a task.
-export function createWorkbench({ config, store, send, serveVideo, owns = (id, owner) => ownedTask(store, id, owner), preview = true }) {
+export function createWorkbench({ config, store, send, serveVideo, frames, owns = (id, owner) => ownedTask(store, id, owner), preview = true }) {
   const inFlight = new Map();
   const serial = (key, fn) => {
     if (inFlight.has(key)) return inFlight.get(key);
@@ -80,9 +80,13 @@ export function createWorkbench({ config, store, send, serveVideo, owns = (id, o
       }
       send(res, 200, result); return true;
     }
-    if (parts[0] !== 'tasks' || !['command', 'pack', 'explain'].includes(parts[2])) return false;
+    if (parts[0] !== 'tasks' || !['command', 'pack', 'explain', 'export'].includes(parts[2])) return false;
     const owner = sessionId(url.searchParams.get('session_id'));
     const record = owns(parts[1], owner); const taskDir = path.join(store.tasksDir, record.id);
+    if (parts.length === 3 && parts[2] === 'export' && method === 'POST') {
+      await serial(`export:${record.id}`, () => store.exportVideo(record));
+      send(res, 200, { video_url: `/tasks/${record.id}/video` }); return true;
+    }
     if (parts.length === 3 && parts[2] === 'command' && method === 'GET') {
       const file = path.join(taskDir, 'command.json'); if (!fs.existsSync(file)) throw problem('任务还没有 command.json。', 404);
       send(res, 200, JSON.parse(fs.readFileSync(file))); return true;
@@ -94,7 +98,21 @@ export function createWorkbench({ config, store, send, serveVideo, owns = (id, o
       const input = await readBody(req); const term = catalogTerm(config, String(input.id ?? ''));
       const selected = listRewards(config, owner, record.params.pattern, record.id).selection.find((t) => t.id === term.id);
       const result = await serial(`explain:${record.id}:${term.id}`, () => explainTerm(config, record, { ...term, selected }));
-      send(res, 200, { ...result, video_url: result.video ? `/api/microduck/tasks/${record.id}/explain/${term.id}/${result.cache_key}/video?session_id=${encodeURIComponent(owner)}` : null }); return true;
+      send(res, 200, { ...result, frame_url: result.status === 'ready' ? `/tasks/${record.id}/explain/${term.id}/${result.cache_key}/frame` : null }); return true;
+    }
+    if (parts.length === 6 && parts[2] === 'explain' && parts[5] === 'frame' && method === 'GET') {
+      catalogTerm(config, parts[3]);
+      if (!frames || !/^[a-f0-9]{16}$/.test(parts[4])) throw problem('演示不可用。', 404);
+      const dir = path.join(config.dataDir, 'explain', record.id, `${parts[3]}-${parts[4]}`);
+      if (!fs.existsSync(path.join(dir, 'motion.json'))) throw problem('演示轨迹不存在。', 404);
+      const num = (key, fallback, low, high) => { const raw = url.searchParams.get(key); const n = raw === null ? fallback : Number(raw); return Number.isFinite(n) ? Math.max(low, Math.min(high, n)) : fallback; };
+      const frame = await frames.render(`explain-${record.id}-${parts[4]}`, dir, { t: num('t',0,0,120), az:num('az',130,-720,720), el:num('el',-18,-89,30), dist:num('dist',.7,.12,2.4), w:720,h:480,quality:80,shadows:false,follow:true });
+      res.writeHead(200, { 'content-type':'image/jpeg', 'content-length':frame.bytes, 'cache-control':'no-store' }); res.end(frame.buffer); return true;
+    }
+    if (parts.length === 6 && parts[2] === 'explain' && parts[5] === 'release' && method === 'POST') {
+      catalogTerm(config, parts[3]);
+      if (!/^[a-f0-9]{16}$/.test(parts[4])) throw problem('演示不存在。', 404);
+      send(res, 200, { released: !!frames?.release(`explain-${record.id}-${parts[4]}`) }); return true;
     }
     if (parts.length === 6 && parts[2] === 'explain' && parts[5] === 'video' && ['GET', 'HEAD'].includes(method)) {
       catalogTerm(config, parts[3]); if (!/^[a-f0-9]{16}$/.test(parts[4])) throw problem('缓存不存在。', 404);

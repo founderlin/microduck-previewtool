@@ -101,8 +101,31 @@ def render_comparison(original, changed, scores, model, out):
     finally: writer.close(); renderer.close()
 
 
+def comparison_motion(original, changed):
+    """One scene: reference, perturbed reference, reference; blend transitions."""
+    count = min(len(original['times']), 150)
+    indices = np.linspace(0, len(original['times']) - 1, count).astype(int)
+    keys = ('joint_pos', 'root_pos', 'root_quat_wxyz')
+    rows = {k: [] for k in keys}
+    stages = []
+    for stage, motion in (('正常', original), ('扰动', changed), ('恢复', original)):
+        for k in keys:
+            arr = np.asarray(motion[k], float)[indices]
+            if rows[k]:
+                start = np.asarray(rows[k][-1]); end = arr[0].copy()
+                if k == 'root_quat_wxyz' and np.dot(start, end) < 0: end = -end
+                for w in np.linspace(0, 1, 12, endpoint=False)[1:]:
+                    item = (1-w)*start + w*end
+                    if k == 'root_quat_wxyz': item /= np.linalg.norm(item)
+                    rows[k].append(item.tolist())
+            rows[k].extend(arr.tolist())
+        if stages: stages.extend(['过渡'] * 11)
+        stages.extend([stage] * count)
+    return {'schema_version': 1, 'joint_names': original['joint_names'], 'control_hz': 50,
+            'times': (np.arange(len(stages)) / 50).tolist(), 'stages': stages, **rows}
+
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--motion-json',type=Path,required=True);p.add_argument('--term-json',type=Path,required=True);p.add_argument('--out-dir',type=Path,required=True);p.add_argument('--asset-root',type=Path,required=True);p.add_argument('--command-json',type=Path)
+    p=argparse.ArgumentParser();p.add_argument('--motion-json',type=Path,required=True);p.add_argument('--term-json',type=Path,required=True);p.add_argument('--out-dir',type=Path,required=True);p.add_argument('--asset-root',type=Path,required=True);p.add_argument('--command-json',type=Path);p.add_argument('--trajectory-only',action='store_true')
     a=p.parse_args();t=json.loads(a.term_json.read_text());m=json.loads(a.motion_json.read_text());a.out_dir.mkdir(parents=True,exist_ok=True)
     __import__('sys').path.insert(0, str(a.asset_root/'src'))
     os.environ.setdefault('MPLCONFIGDIR',str(a.out_dir/'.mpl'))
@@ -113,8 +136,10 @@ def main():
         model=mujoco.MjModel.from_xml_path(str(a.asset_root/'src/mjlab_microduck/robot/microduck/robot_groundcontact.xml'))
         command=json.loads(a.command_json.read_text()) if a.command_json and a.command_json.is_file() else command_from_motion(m)
         changed=perturb(m,t['explain']['perturbation']);scores=[score_term(t,v,command,model) for v in (m,changed)]
-        render_comparison(m,changed,scores,model,a.out_dir/'explain.mp4')
-        result={'term_id':t['id'],'status':'ready','video':'explain.mp4','times':m['times'],'original':scores[0],'perturbed':scores[1],'caption':'正常参考 vs 受控扰动；同一训练函数评分，不预测改变权重后的策略。'}
+        trajectory=comparison_motion(m,changed)
+        (a.out_dir/'motion.json').write_text(json.dumps(trajectory,ensure_ascii=False,allow_nan=False))
+        if not a.trajectory_only: render_comparison(m,changed,scores,model,a.out_dir/'explain.mp4')
+        result={'term_id':t['id'],'status':'ready','video':None if a.trajectory_only else 'explain.mp4','duration_s':trajectory['times'][-1], 'stages':trajectory['stages'], 'times':m['times'],'original':scores[0],'perturbed':scores[1],'caption':'正常参考 vs 受控扰动；同一训练函数评分，不预测改变权重后的策略。'}
     (a.out_dir/'scores.json').write_text(json.dumps(result,ensure_ascii=False,allow_nan=False,indent=2)+'\n')
     print(json.dumps({'status':result['status']}))
 if __name__=='__main__':main()

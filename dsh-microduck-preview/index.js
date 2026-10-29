@@ -184,6 +184,7 @@ export function apply(ctx, config = {}) {
     idleMs: 45_000,
     maxWorkers: 1,
   });
+  store.onSuperseded = (record) => frames.release(record.id);
   ctx.effect(() => () => frames.dispose());
 
   // ---- HTTP surface for the Browser half ---------------------------------
@@ -236,9 +237,9 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'duck_preview',
     description:
-      'Render a MuJoCo preview video of the Microduck biped performing a requested gait/gesture. ' +
-      'Long task: typically 15–40 s on this machine (budget 90 s). Returns task_id, status, the mp4 path, a same-origin video_url and a ' +
-      'metrics summary; the Web "Microduck Preview" panel shows the video automatically. ' +
+      'Generate a Microduck motion for the current session’s MuJoCo Playground. ' +
+      'Invoke for a user message beginning with /duck_go (if the host can pass it through); ordinary conversation must not change the motion. ' +
+      'Returns task_id, status and metrics; the Playground displays the current action. Video encoding happens only on export. ' +
       'All parameters are optional and default sensibly, so a follow-up tweak may pass only the changed field — ' +
       'but prefer passing the full params from duck_templates.recent_tasks. ' +
       'For a SEQUENCE of moves in one clip (e.g. “往前走，然后向左转弯，再向右转”), use pattern="composite" with ' +

@@ -580,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--params-json", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--motion-only", action="store_true", help="Create the scene trajectory without encoding video")
+    parser.add_argument("--render-motion", type=Path, help="Render this existing motion without replacing it")
     args = parser.parse_args(argv)
 
     out_dir: Path = args.out_dir
@@ -613,7 +615,14 @@ def main(argv: list[str] | None = None) -> int:
             result, {"run_preview_authoring_s": round(author_seconds, 2)}))
 
         t_render = time.time()
-        render_info = render_preview(result.motion, result, out_dir, verbose=args.verbose)
+        render_motion = json.loads(args.render_motion.read_text(encoding="utf-8")) if args.render_motion else result.motion
+        if args.motion_only:
+            render_info = {"frames": len(result.motion["times"]), "fps": 50,
+                           "duration_s": result.motion["duration_s"], "width": None,
+                           "height": None, "stride": 1, "bytes": 0,
+                           "codec_info": None, "probe": None, "render_seconds": 0}
+        else:
+            render_info = render_preview(render_motion, result, out_dir, verbose=args.verbose)
         if args.verbose:
             print(f"[preview] rendered {render_info['frames']} frames in "
                   f"{time.time() - t_render:.1f}s", flush=True)
@@ -622,10 +631,12 @@ def main(argv: list[str] | None = None) -> int:
         warnings = list(result.warnings)
         metrics = build_metrics(result.params, result, render_info,
                                 author_seconds, total_seconds, warnings)
+        if args.motion_only:
+            metrics["render"] = None
         write_json(out_dir / "metrics.json", metrics)
         print(json.dumps({
             "ok": True,
-            "video": str(out_dir / "preview.mp4"),
+            "video": None if args.motion_only else str(out_dir / "preview.mp4"),
             "frames": metrics["frames"],
             "duration_s": metrics["duration_s"],
             "degraded": metrics["geometry"]["degraded"],

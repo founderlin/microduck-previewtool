@@ -36,7 +36,8 @@ test('DSH tools isolate session inheritance and both hosts serve identical workb
       assert.equal(left, right);
     }
     const page = await (await fetch(`${dshOrigin}/api/microduck/workbench/?session_id=chat-A`)).text();
-    assert.match(page, /segments-editor/); assert.match(page, /reward-cards/); assert.match(page, /pack-button/);
+    assert.match(page, /id="viewport"/); assert.match(page, /id="rewards"/); assert.match(page, /id="execute"/);
+    assert.doesNotMatch(page, /segments-editor|reward-cards|pack-button|<video/);
     const foreign = await fetch(`${dshOrigin}/api/microduck/rewards?session_id=chat-B&task_id=${a.task_id}`);
     assert.equal(foreign.status, 404);
     assert.equal((await fetch(`${dshOrigin}/api/microduck/tasks/${a.task_id}/pack?session_id=chat-A`, { method: 'POST' })).status, 400);
